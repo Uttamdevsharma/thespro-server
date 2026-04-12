@@ -1,0 +1,59 @@
+﻿controllers/adminController.ts(95,15): error TS2339: Property 'department' does not exist on type '{ role: { $in: string[]; }; }'.
+controllers/adminController.ts(146,15): error TS2339: Property 'department' does not exist on type '{ role: string; }'.
+controllers/adminController.ts(192,15): error TS2339: Property 'departmentId' does not exist on type '{}'.
+controllers/authController.ts(60,27): error TS2339: Property 'matchPassword' does not exist on type 'Document<unknown, {}, { email: string; password: string; role: "student" | "supervisor" | "committee" | "admin"; department: ObjectId; profilePicture: string; researchCells: ObjectId[]; ... 9 more ...; mainSupervisor?: ObjectId; } & DefaultTimestampProps, {}, { ...; }> & { ...; } & DefaultTimestampProps & { ...; } &...'.
+controllers/defenseBoardController.ts(71,11): error TS2339: Property 'date' does not exist on type '{}'.
+controllers/defenseBoardController.ts(128,95): error TS2339: Property 'title' does not exist on type 'ObjectId'.
+controllers/defenseBoardController.ts(128,119): error TS2339: Property 'members' does not exist on type 'ObjectId'.
+controllers/defenseBoardController.ts(227,51): error TS2345: Argument of type '(req: Request<ParamsDictionary, any, any, ParsedQs, Record<string, any>>, res: Response<any, Record<string, any>, number>) => Promise<...>' is not assignable to parameter of type '(req: Request<ParamsDictionary, any, any, ParsedQs, Record<string, any>>, res: Response<any, Record<string, any>, number>, next: NextFunction) => void | Promise<...>'.
+  Type 'Promise<Response<any, Record<string, any>, number>>' is not assignable to type 'void | Promise<void>'.
+    Type 'Promise<Response<any, Record<string, any>, number>>' is not assignable to type 'Promise<void>'.
+      Type 'Response<any, Record<string, any>, number>' is not assignable to type 'void'.
+controllers/defenseBoardController.ts(234,11): error TS2339: Property 'defenseType' does not exist on type '{ boardMembers: any; }'.
+controllers/defenseBoardController.ts(307,13): error TS2339: Property 'defenseType' does not exist on type '{ groups: { $in: ObjectId[]; }; }'.
+controllers/defenseBoardController.ts(386,49): error TS2345: Argument of type '(req: Request<ParamsDictionary, any, any, ParsedQs, Record<string, any>>, res: Response<any, Record<string, any>, number>) => Promise<...>' is not assignable to parameter of type '(req: Request<ParamsDictionary, any, any, ParsedQs, Record<string, any>>, res: Response<any, Record<string, any>, number>, next: NextFunction) => void | Promise<...>'.
+  Type 'Promise<Response<any, Record<string, any>, number>>' is not assignable to type 'void | Promise<void>'.
+    Type 'Promise<Response<any, Record<string, any>, number>>' is not assignable to type 'Promise<void>'.
+      Type 'Response<any, Record<string, any>, number>' is not assignable to type 'void'.
+controllers/defenseBoardController.ts(394,16): error TS2339: Property 'defenseType' does not exist on type '{}'.
+controllers/defenseBoardController.ts(401,19): error TS2339: Property '$and' does not exist on type '{ status: string; }'.
+controllers/defenseBoardController.ts(406,19): error TS2339: Property 'courseSupervisorId' does not exist on type '{ status: string; }'.
+controllers/defenseBoardController.ts(408,19): error TS2339: Property '$or' does not exist on type '{ status: string; }'.
+controllers/defenseBoardController.ts(444,14): error TS2339: Property 'groups' does not exist on type '{}'.
+controllers/defenseBoardController.ts(470,43): error TS2345: Argument of type 'string' is not assignable to parameter of type 'ObjectId'.
+controllers/defenseBoardController.ts(514,11): error TS2339: Property 'defenseType' does not exist on type '{ boardMembers: any; }'.
+controllers/defenseResultController.ts(9,53): error TS2345: Argument of type '(req: Request<ParamsDictionary, any, any, ParsedQs, Record<string, any>>, res: Response<any, Record<string, any>, number>) => Promise<...>' is not assignable to parameter of type '(req: Request<ParamsDictionary, any, any, ParsedQs, Record<string, any>>, res: Response<any, Record<string, any>, number>, next: NextFunction) => void | Promise<...>'.
+  Type 'Promise<Response<any, Record<string, any>, number>>' is not assignable to type 'void | Promise<void>'.
+    Type 'Promise<Response<any, Record<string, any>, number>>' is not assignable to type 'Promise<void>'.
+      Type 'Response<any, Record<string, any>, number>' is not assignable to type 'void'.
+controllers/defenseResultController.ts(20,21): error TS2339: Property '$and' does not exist on type '{ status: string; defenseBoardId: { $ne: any; }; }'.
+controllers/defenseResultController.ts(25,21): error TS2339: Property 'courseSupervisorId' does not exist on type '{ status: string; defenseBoardId: { $ne: any; }; }'.
+controllers/defenseResultController.ts(27,21): error TS2339: Property '$or' does not exist on type '{ status: string; defenseBoardId: { $ne: any; }; }'.
+controllers/defenseResultController.ts(43,25): error TS2339: Property 'defenseType' does not exist on type '{ groups: { $in: ObjectId[]; }; }'.
+controllers/defenseResultController.ts(76,25): error TS2339: Property 'name' does not exist on type 'ObjectId'.
+controllers/defenseResultController.ts(77,30): error TS2339: Property 'studentId' does not exist on type 'ObjectId'.
+controllers/defenseResultController.ts(79,63): error TS2339: Property 'name' does not exist on type 'ObjectId'.
+controllers/defenseResultController.ts(82,60): error TS2339: Property 'name' does not exist on type 'ObjectId'.
+controllers/evaluationController.ts(18,125): error TS2339: Property 'enumValues' does not exist on type 'SchemaType<any, Document<unknown, {}, FlatRecord<{ student: ObjectId; defenseType: "Pre-Defense" | "Final Defense"; evaluator: ObjectId; proposal: ObjectId; evaluationType: "supervisor" | "committee"; marks: number; comments?: string; } & DefaultTimestampProps>, {}, ResolveSchemaOptions<...>> & FlatRecord<...> & { ....'.
+controllers/evaluationController.ts(184,15): error TS2339: Property 'defenseType' does not exist on type '{ proposal: string | string[]; }'.
+controllers/evaluationController.ts(238,32): error TS2339: Property 'name' does not exist on type 'ObjectId'.
+controllers/evaluationController.ts(288,66): error TS2345: Argument of type 'string | ParsedQs | (string | ParsedQs)[]' is not assignable to parameter of type 'string'.
+  Type 'ParsedQs' is not assignable to type 'string'.
+controllers/evaluationController.ts(359,76): error TS2339: Property 'name' does not exist on type 'ObjectId'.
+controllers/proposalController.ts(512,56): error TS2367: This comparison appears to be unintentional because the types '"Pre-Defense" | "Final Defense"' and '"pre-defense"' have no overlap.
+controllers/proposalController.ts(513,57): error TS2367: This comparison appears to be unintentional because the types '"Pre-Defense" | "Final Defense"' and '"pre-defense"' have no overlap.
+controllers/proposalController.ts(514,58): error TS2367: This comparison appears to be unintentional because the types '"Pre-Defense" | "Final Defense"' and '"final-defense"' have no overlap.
+controllers/proposalController.ts(515,59): error TS2367: This comparison appears to be unintentional because the types '"Pre-Defense" | "Final Defense"' and '"final-defense"' have no overlap.
+controllers/proposalController.ts(519,91): error TS2339: Property 'name' does not exist on type 'ObjectId'.
+controllers/supervisorController.ts(40,36): error TS2339: Property 'secure_url' does not exist on type 'unknown'.
+controllers/uploadController.ts(25,21): error TS2339: Property 'secure_url' does not exist on type 'unknown'.
+controllers/uploadController.ts(26,22): error TS2339: Property 'public_id' does not exist on type 'unknown'.
+controllers/uploadController.ts(27,22): error TS2339: Property 'resource_type' does not exist on type 'unknown'.
+controllers/userController.ts(22,11): error TS2339: Property 'researchCells' does not exist on type '{ role: { $in: string[]; }; department: any; }'.
+controllers/userController.ts(154,20): error TS2339: Property 'matchPassword' does not exist on type 'Document<unknown, {}, { email: string; password: string; role: "student" | "supervisor" | "committee" | "admin"; department: ObjectId; profilePicture: string; researchCells: ObjectId[]; ... 9 more ...; mainSupervisor?: ObjectId; } & DefaultTimestampProps, {}, { ...; }> & { ...; } & DefaultTimestampProps & { ...; } &...'.
+controllers/userController.ts(196,12): error TS2339: Property 'department' does not exist on type '{}'.
+controllers/userController.ts(250,11): error TS2339: Property 'researchCells' does not exist on type '{ role: { $in: string[]; }; }'.
+utils/seedData.ts(56,72): error TS2339: Property 'trim' does not exist on type 'never'.
+utils/seedData.ts(57,17): error TS2322: Type 'string' is not assignable to type 'ObjectId'.
+utils/seedData.ts(59,37): error TS2339: Property 'trim' does not exist on type 'never'.
+utils/seedData.ts(62,17): error TS2322: Type 'string' is not assignable to type 'ObjectId'.
