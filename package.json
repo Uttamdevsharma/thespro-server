@@ -1,8 +1,7 @@
 {
   "name": "server",
   "version": "1.0.0",
-  "description": "",
-  "main": "dist/index.js",
+  "main": "api/index.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsup src/index.ts --format esm --platform node --target node20 --outDir api --no-treeshake",
