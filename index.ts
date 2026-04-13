@@ -30,6 +30,7 @@ import defenseResultRoutes from './routes/defenseResultRoutes.js';
 import evaluationRoutes from './routes/evaluationRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
+import aiRoutes from './routes/aiRoutes.js';
 
 // Import Chat Models and Controllers
 import Message from './models/Message.js'; // Ensure .js extension
@@ -82,6 +83,7 @@ app.use('/api/defense-results', defenseResultRoutes);
 app.use('/api/evaluations', evaluationRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/public', publicRoutes);
+app.use('/api/ai', aiRoutes);
 
 
 // Basic route

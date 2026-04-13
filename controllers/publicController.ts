@@ -1,13 +1,15 @@
 import User from '../models/User.js';
 import Department from '../models/Department.js';
 import ResearchCell from '../models/ResearchCell.js';
+import Notice from '../models/Notice.js';
+import Proposal from '../models/Proposal.js';
 import asyncHandler from 'express-async-handler';
 
 // @desc    Get all departments
 // @route   GET /api/public/departments
 // @access  Public
 export const getPublicDepartments = asyncHandler(async (req, res) => {
-    const departments = await Department.find({}).sort({ name: 1 });
+    const departments = await Department.find({ name: { $ne: 'Administration' } }).sort({ name: 1 });
     res.json(departments);
 });
 
@@ -49,4 +51,37 @@ export const getPublicFacultyProfile = asyncHandler(async (req, res) => {
         res.status(404);
         throw new Error('Faculty member not found');
     }
+});
+
+// @desc    Get public notices (Committee only)
+// @route   GET /api/public/notices
+// @access  Public
+export const getPublicNotices = asyncHandler(async (req, res) => {
+    // Fetch notices and populate sender info to check role
+    const notices = await Notice.find({})
+        .populate('sender', 'name role')
+        .sort({ createdAt: -1 });
+
+    // Filter only committee notices
+    const committeeNotices = notices.filter((n: any) => n.sender && n.sender.role === 'committee');
+    
+    // Return latest 10
+    res.json(committeeNotices.slice(0, 10));
+});
+
+// @desc    Get public system statistics
+// @route   GET /api/public/stats
+// @access  Public
+export const getPublicStats = asyncHandler(async (req, res) => {
+    const studentCount = await User.countDocuments({ role: 'student' });
+    const supervisorCount = await User.countDocuments({ role: { $in: ['supervisor', 'committee'] } });
+    const deptCount = await Department.countDocuments({});
+    const proposalCount = await Proposal.countDocuments({});
+
+    res.json({
+        studentCount,
+        supervisorCount,
+        deptCount,
+        proposalCount
+    });
 });

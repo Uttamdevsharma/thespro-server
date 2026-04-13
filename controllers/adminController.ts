@@ -23,7 +23,7 @@ export const createDepartment = asyncHandler(async (req, res) => {
 // @route   GET /api/admin/departments
 // @access  Private (Admin, Student Registration)
 export const getDepartments = asyncHandler(async (req, res) => {
-    const departments = await Department.find({}).sort({ name: 1 });
+    const departments = await Department.find({ name: { $ne: 'Administration' } }).sort({ name: 1 });
     res.json(departments);
 });
 
