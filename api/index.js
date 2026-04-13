@@ -1235,7 +1235,7 @@ var getUserById = asyncHandler4(async (req, res) => {
 import multer from "multer";
 import path from "path";
 var storage = multer.diskStorage({
-  destination: "uploads/profile-pictures",
+  destination: process.env.VERCEL ? "/tmp" : "uploads/profile-pictures",
   filename: function(req, file, cb) {
     cb(null, file.fieldname + "-" + Date.now() + path.extname(file.originalname));
   }
@@ -1337,9 +1337,11 @@ var createCommitteeNotice = asyncHandler5(async (req, res) => {
     recipients
   });
   const io = req.app.get("socketio");
-  recipients.forEach((recipientId) => {
-    io.emit("newNotice", { recipientId, notice });
-  });
+  if (io) {
+    recipients.forEach((recipientId) => {
+      io.emit("newNotice", { recipientId, notice });
+    });
+  }
   res.status(201).json(notice);
 });
 var getCommitteeSentNotices = asyncHandler5(async (req, res) => {
@@ -1373,9 +1375,11 @@ var sendNoticeToGroup = asyncHandler5(async (req, res) => {
     recipients
   });
   const io = req.app.get("socketio");
-  recipients.forEach((recipientId) => {
-    io.emit("newNotice", { recipientId, notice });
-  });
+  if (io) {
+    recipients.forEach((recipientId) => {
+      io.emit("newNotice", { recipientId, notice });
+    });
+  }
   res.status(201).json(notice);
 });
 var getSupervisorSentNotices = asyncHandler5(async (req, res) => {
@@ -1854,7 +1858,9 @@ var addOrUpdateComment = asyncHandler9(async (req, res) => {
     }
     const updatedDefenseBoard = await defenseBoard.save();
     const io = req.app.get("socketio");
-    io.emit("commentUpdated", { defenseBoardId: updatedDefenseBoard._id, groupId, text, commentedBy: req.user._id });
+    if (io) {
+      io.emit("commentUpdated", { defenseBoardId: updatedDefenseBoard._id, groupId, text, commentedBy: req.user._id });
+    }
     res.json(updatedDefenseBoard);
   } else {
     res.status(404);
@@ -2914,25 +2920,48 @@ router16.post("/generate-description", protect, generateProposalDescription);
 var aiRoutes_default = router16;
 
 // src/app.ts
+var checkEnv = () => {
+  const requiredEnv = ["MONGO_URI", "JWT_SECRET", "FRONTEND_URL"];
+  const missing = requiredEnv.filter((env) => !process.env[env]);
+  if (missing.length > 0) {
+    console.error(`WARNING: Missing critical environment variables: ${missing.join(", ")}`);
+  }
+};
+checkEnv();
 var app = express17();
-app.use(cors({ origin: process.env.FRONTEND_URL }));
+var allowedOrigins = process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : ["http://localhost:3000"];
+app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express17.json());
+var cached = global.mongooseCache;
+if (!cached) {
+  cached = global.mongooseCache = { conn: null, promise: null };
+}
 app.use(async (req, res, next) => {
-  if (mongoose13.connection.readyState === 1) {
+  if (cached.conn) {
     return next();
   }
   if (!process.env.MONGO_URI) {
     console.error("FATAL: MONGO_URI is missing in environment variables");
-    return next();
+    return res.status(500).json({ message: "Internal Server Error: DB configuration missing" });
+  }
+  if (!cached.promise) {
+    const opts = {
+      bufferCommands: false,
+      serverSelectionTimeoutMS: 5e3
+    };
+    cached.promise = mongoose13.connect(process.env.MONGO_URI, opts).then((mongoose14) => {
+      console.log("MongoDB connected for serverless environment (cached)");
+      return mongoose14;
+    }).catch((err) => {
+      cached.promise = null;
+      console.error("MongoDB connection error:", err);
+      throw err;
+    });
   }
   try {
-    await mongoose13.connect(process.env.MONGO_URI, {
-      serverSelectionTimeoutMS: 5e3
-    });
-    console.log("MongoDB connected for serverless environment");
+    cached.conn = await cached.promise;
     next();
   } catch (err) {
-    console.error("MongoDB connection error:", err);
     next(err);
   }
 });

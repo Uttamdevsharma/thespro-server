@@ -2,6 +2,7 @@ import 'dotenv/config'; // Correct way to load dotenv in ES modules
 import express, { Request, Response, NextFunction } from 'express';
 
 declare global {
+  var mongooseCache: { conn: any, promise: any } | undefined;
   namespace Express {
     interface Request {
       user?: any;
@@ -12,6 +13,16 @@ declare global {
 
 import mongoose from 'mongoose';
 import cors from 'cors';
+
+// Safe environment variable checks
+const checkEnv = () => {
+  const requiredEnv = ['MONGO_URI', 'JWT_SECRET', 'FRONTEND_URL'];
+  const missing = requiredEnv.filter((env) => !process.env[env]);
+  if (missing.length > 0) {
+    console.error(`WARNING: Missing critical environment variables: ${missing.join(', ')}`);
+  }
+};
+checkEnv();
 
 import authRoutes from './routes/authRoutes.js';
 import researchCellRoutes from './routes/researchCellRoutes.js';
@@ -34,31 +45,47 @@ import aiRoutes from './routes/aiRoutes.js';
 const app = express();
 
 // Middleware
-app.use(cors({ origin: process.env.FRONTEND_URL }));
+const allowedOrigins = process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : ['http://localhost:3000'];
+app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 
 // MongoDB Serverless Connection Handling
+let cached = global.mongooseCache;
+
+if (!cached) {
+  cached = global.mongooseCache = { conn: null, promise: null };
+}
+
 app.use(async (req, res, next) => {
-  // If already connected, proceed to the next middleware/route
-  if (mongoose.connection.readyState === 1) {
+  if (cached!.conn) {
     return next();
   }
 
   if (!process.env.MONGO_URI) {
     console.error("FATAL: MONGO_URI is missing in environment variables");
-    return next();
+    return res.status(500).json({ message: 'Internal Server Error: DB configuration missing' });
+  }
+
+  if (!cached!.promise) {
+    const opts = {
+      bufferCommands: false,
+      serverSelectionTimeoutMS: 5000,
+    };
+
+    cached!.promise = mongoose.connect(process.env.MONGO_URI, opts).then((mongoose) => {
+      console.log('MongoDB connected for serverless environment (cached)');
+      return mongoose;
+    }).catch(err => {
+      cached!.promise = null;
+      console.error('MongoDB connection error:', err);
+      throw err;
+    });
   }
 
   try {
-    // Establish DB connection specifically handling lambda Cold Starts
-    await mongoose.connect(process.env.MONGO_URI, {
-      serverSelectionTimeoutMS: 5000,
-    });
-    console.log('MongoDB connected for serverless environment');
+    cached!.conn = await cached!.promise;
     next();
   } catch (err) {
-    console.error('MongoDB connection error:', err);
-    // Continue down the chain, error will be caught by route handler
     next(err);
   }
 });

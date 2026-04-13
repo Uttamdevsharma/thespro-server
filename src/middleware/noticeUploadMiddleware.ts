@@ -4,7 +4,7 @@ import path from 'path';
 // Set storage engine for notices
 const noticeStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/notices');
+    cb(null, process.env.VERCEL ? '/tmp' : 'uploads/notices');
   },
   filename: (req, file, cb) => {
     cb(null, file.fieldname + '-' + Date.now() + path.extname(file.originalname));

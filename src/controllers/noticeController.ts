@@ -24,9 +24,11 @@ const createCommitteeNotice = asyncHandler(async (req, res) => {
   });
 
   const io = req.app.get('socketio');
-  recipients.forEach(recipientId => {
-    io.emit('newNotice', { recipientId, notice });
-  });
+  if (io) {
+    recipients.forEach(recipientId => {
+      io.emit('newNotice', { recipientId, notice });
+    });
+  }
 
   res.status(201).json(notice);
 });
@@ -68,9 +70,11 @@ const sendNoticeToGroup = asyncHandler(async (req, res) => {
   });
 
   const io = req.app.get('socketio');
-  recipients.forEach(recipientId => {
-    io.emit('newNotice', { recipientId, notice });
-  });
+  if (io) {
+    recipients.forEach(recipientId => {
+      io.emit('newNotice', { recipientId, notice });
+    });
+  }
 
   res.status(201).json(notice);
 });

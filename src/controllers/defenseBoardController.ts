@@ -368,8 +368,10 @@ const addOrUpdateComment = asyncHandler(async (req, res) => {
 
     // Get Socket.io instance
     const io = req.app.get('socketio');
-    // Emit event to all connected clients
-    io.emit('commentUpdated', { defenseBoardId: updatedDefenseBoard._id, groupId, text, commentedBy: req.user._id });
+    if (io) {
+      // Emit event to all connected clients
+      io.emit('commentUpdated', { defenseBoardId: updatedDefenseBoard._id, groupId, text, commentedBy: req.user._id });
+    }
 
     res.json(updatedDefenseBoard);
   } else {

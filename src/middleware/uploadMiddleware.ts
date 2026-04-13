@@ -3,7 +3,7 @@ import path from 'path';
 
 // Set storage engine
 const storage = multer.diskStorage({
-  destination: 'uploads/profile-pictures',
+  destination: process.env.VERCEL ? '/tmp' : 'uploads/profile-pictures',
   filename: function (req, file, cb) {
     cb(null, file.fieldname + '-' + Date.now() + path.extname(file.originalname));
   },
