@@ -4,7 +4,7 @@ import 'dotenv/config';
 const { CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET } = process.env;
 
 if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
-  throw new Error('Cloudinary credentials are not set in the .env file.');
+  console.error('Cloudinary credentials are not set in the .env. Uploads will fail.');
 }
 
 cloudinary.config({
