@@ -68,7 +68,7 @@ export const deleteDepartment = asyncHandler(async (req, res) => {
 // @route   POST /api/admin/teachers
 // @access  Private (Admin)
 export const createTeacher = asyncHandler(async (req, res) => {
-    const { name, email, password, departmentId } = req.body;
+    const { name, email, password, departmentId, designation } = req.body;
     const userExists = await User.findOne({ email });
     if (userExists) {
         res.status(400);
@@ -80,6 +80,7 @@ export const createTeacher = asyncHandler(async (req, res) => {
         password,
         role: 'supervisor',
         department: departmentId,
+        designation,
     });
     res.status(201).json(teacher);
 });
@@ -108,6 +109,9 @@ export const updateTeacher = asyncHandler(async (req, res) => {
         teacher.email = req.body.email || teacher.email;
         if (req.body.departmentId) {
             teacher.department = req.body.departmentId;
+        }
+        if (req.body.designation) {
+            teacher.designation = req.body.designation;
         }
         if (req.body.password) {
             teacher.password = req.body.password;

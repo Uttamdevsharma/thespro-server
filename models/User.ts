@@ -23,12 +23,10 @@ const UserSchema = new mongoose.Schema({
   department: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Department',
-    required: true,
   },
   studentId: {
     type: String,
-    required: function() { return this.role === 'student'; }, // Student ID is required only for students
-    unique: function() { return this.role === 'student'; } // Student ID must be unique for students
+    unique: function() { return this.role === 'student' && this.studentId; } // Only unique if provided
   },
   profilePicture: {
     type: String,
@@ -41,7 +39,6 @@ const UserSchema = new mongoose.Schema({
   }],
   currentCGPA: {
     type: Number,
-    required: function() { return this.role === 'student'; },
   },
   maxGroupCapacity: {
     type: Number,
@@ -63,6 +60,10 @@ const UserSchema = new mongoose.Schema({
     required: function() { return this.isCourseSupervisor; },
   },
   // Supervisor Profile Fields
+  designation: {
+    type: String,
+    required: function() { return this.role === 'supervisor' || this.role === 'committee'; },
+  },
   education: {
     type: String,
     default: '',

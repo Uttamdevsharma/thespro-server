@@ -110,6 +110,8 @@ const getUserProfile = asyncHandler(async (req, res) => {
       studentId: user.studentId,
       profilePicture: user.profilePicture,
       researchCells: user.researchCells,
+      department: user.department,
+      currentCGPA: user.currentCGPA,
     });
   } else {
     res.status(404);
@@ -125,16 +127,25 @@ const updateUserProfile = asyncHandler(async (req, res) => {
 
   if (user) {
     user.name = req.body.name || user.name;
+    user.studentId = req.body.studentId || user.studentId;
+    user.currentCGPA = req.body.currentCGPA || user.currentCGPA;
+    // Support both department and departmentId from frontend
+    user.department = req.body.departmentId || req.body.department || user.department;
 
     const updatedUser = await user.save();
+    
+    // Fetch populated user for consistent frontend experience
+    const populatedUser = await User.findById(updatedUser._id).populate('department', 'name');
 
     res.json({
-      _id: updatedUser._id,
-      name: updatedUser.name,
-      email: updatedUser.email,
-      role: updatedUser.role,
-      studentId: updatedUser.studentId,
-      profilePicture: updatedUser.profilePicture,
+      _id: populatedUser._id,
+      name: populatedUser.name,
+      email: populatedUser.email,
+      role: populatedUser.role,
+      studentId: populatedUser.studentId,
+      profilePicture: populatedUser.profilePicture,
+      department: populatedUser.department,
+      currentCGPA: populatedUser.currentCGPA,
     });
   } else {
     res.status(404);
