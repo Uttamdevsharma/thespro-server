@@ -49,7 +49,7 @@ GOOGLE_CLIENT_SECRET=your_google_secret
 GOOGLE_CALLBACK_URL=your_callback_url_path
 ```
 
-## 📂 Folder Structures
+## 📂 Folder Structure
 
 ```text
 src/
