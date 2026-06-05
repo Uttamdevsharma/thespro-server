@@ -87,7 +87,7 @@ src/
    npm run dev
    ```
 
-## 📦 Build & Deployments
+## 📦 Build & Deployment
 
 **To compile the TypeScript project:**
 ```bash
