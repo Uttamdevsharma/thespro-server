@@ -6,7 +6,7 @@ The robust and scalable backend for the ThesPro platform, built to securely hand
 - **Server Live URL:** [https://thespro-server.vercel.app](https://thespro-server.vercel.app)
 - **Client Live URL:** [https://thespro-client.vercel.app](https://thespro-client.vercel.app)
 
-## ✨ Feature
+## ✨ Features
 
 - **Secure Authentication:** JSON Web Tokens (JWT) combined with Google OAuth2 login flows for robust identity verification.
 - **RESTful Architecture:** Express router handling compartmentalized routes mapping perfectly to entity models.
