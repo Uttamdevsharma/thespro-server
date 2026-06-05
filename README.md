@@ -97,7 +97,7 @@ npm run build
 **Deployment:**
 The backend is optimized and deployed via **Vercel** serverless functions. Builds compile to CommonJS/ESM via `tsup` and are exposed entirely from `api/index.js`, bypassing typical long-running `app.listen()` behaviors for serverless scalability.
 
-## 👨‍💻 Author
+## 👨‍💻 Authors
 
 **Name:** Uttam  
 **Role:** Full Stack Developer
