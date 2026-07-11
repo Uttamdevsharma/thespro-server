@@ -9,13 +9,13 @@ import asyncHandler from 'express-async-handler';
 // @route   POST /api/admin/departments
 // @access  Private (Admin)
 export const createDepartment = asyncHandler(async (req, res) => {
-    const { name } = req.body;
+    const { name, abbreviation } = req.body;
     const departmentExists = await Department.findOne({ name });
     if (departmentExists) {
         res.status(400);
         throw new Error('Department already exists');
     }
-    const department = await Department.create({ name });
+    const department = await Department.create({ name, abbreviation });
     res.status(201).json(department);
 });
 
@@ -34,6 +34,9 @@ export const updateDepartment = asyncHandler(async (req, res) => {
     const department = await Department.findById(req.params.id);
     if (department) {
         department.name = req.body.name || department.name;
+        if (req.body.abbreviation !== undefined) {
+            department.abbreviation = req.body.abbreviation;
+        }
         const updatedDepartment = await department.save();
         res.json(updatedDepartment);
     } else {

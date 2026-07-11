@@ -2568,6 +2568,10 @@ var DepartmentSchema = new mongoose11.Schema({
     required: true,
     unique: true,
     trim: true
+  },
+  abbreviation: {
+    type: String,
+    trim: true
   }
 }, { timestamps: true });
 var Department_default = mongoose11.model("Department", DepartmentSchema);
@@ -2592,13 +2596,13 @@ var CommitteeMember_default = mongoose12.model("CommitteeMember", CommitteeMembe
 // src/controllers/adminController.ts
 import asyncHandler14 from "express-async-handler";
 var createDepartment = asyncHandler14(async (req, res) => {
-  const { name } = req.body;
+  const { name, abbreviation } = req.body;
   const departmentExists = await Department_default.findOne({ name });
   if (departmentExists) {
     res.status(400);
     throw new Error("Department already exists");
   }
-  const department = await Department_default.create({ name });
+  const department = await Department_default.create({ name, abbreviation });
   res.status(201).json(department);
 });
 var getDepartments = asyncHandler14(async (req, res) => {
@@ -2609,6 +2613,9 @@ var updateDepartment = asyncHandler14(async (req, res) => {
   const department = await Department_default.findById(req.params.id);
   if (department) {
     department.name = req.body.name || department.name;
+    if (req.body.abbreviation !== void 0) {
+      department.abbreviation = req.body.abbreviation;
+    }
     const updatedDepartment = await department.save();
     res.json(updatedDepartment);
   } else {
@@ -2777,9 +2784,37 @@ import express15 from "express";
 
 // src/controllers/publicController.ts
 import asyncHandler15 from "express-async-handler";
+function generateAbbreviation(name) {
+  const words = name.replace(/[&]/g, "").split(/\s+/).filter((w) => w.length > 0 && !["and", "of", "the", "in", "for"].includes(w.toLowerCase().replace(/[^a-z]/g, "")));
+  if (words.length === 0) return name;
+  if (words.length === 1) return words[0];
+  if (words.length >= 3) {
+    return words.map((w) => w[0].toUpperCase()).join("");
+  }
+  const second = words[1].toLowerCase();
+  if (["engineering", "department", "administration"].includes(second)) {
+    if (words[0].toLowerCase() === "business") return "BBA";
+    return words[0];
+  }
+  return words.map((w) => w[0].toUpperCase()).join("");
+}
 var getPublicDepartments = asyncHandler15(async (req, res) => {
   const departments = await Department_default.find({ name: { $ne: "Administration" } }).sort({ name: 1 });
-  res.json(departments);
+  const departmentsWithMeta = await Promise.all(
+    departments.map(async (dept) => {
+      const supervisorCount = await User_default.countDocuments({
+        role: "supervisor",
+        department: dept._id
+      });
+      return {
+        _id: dept._id,
+        name: dept.name,
+        abbreviation: dept.abbreviation || generateAbbreviation(dept.name),
+        supervisorCount
+      };
+    })
+  );
+  res.json(departmentsWithMeta);
 });
 var getPublicResearchCells = asyncHandler15(async (req, res) => {
   const cells = await ResearchCell_default.find({}).sort({ title: 1 });
@@ -2788,13 +2823,13 @@ var getPublicResearchCells = asyncHandler15(async (req, res) => {
 var getFacultyByDepartment = asyncHandler15(async (req, res) => {
   const { departmentId } = req.params;
   const faculty = await User_default.find({
-    role: { $in: ["supervisor", "committee"] },
+    role: "supervisor",
     department: departmentId
   }).select("-password").populate("researchCells", "title").sort({ name: 1 });
   res.json(faculty);
 });
 var getPublicFacultyProfile = asyncHandler15(async (req, res) => {
-  const faculty = await User_default.findById(req.params.id).select("-password").populate("department", "name").populate("researchCells", "title");
+  const faculty = await User_default.findById(req.params.id).select("-password").populate("department", "name abbreviation").populate("researchCells", "title");
   if (faculty && (faculty.role === "supervisor" || faculty.role === "committee")) {
     res.json(faculty);
   } else {
@@ -2803,13 +2838,25 @@ var getPublicFacultyProfile = asyncHandler15(async (req, res) => {
   }
 });
 var getPublicNotices = asyncHandler15(async (req, res) => {
+  const { limit } = req.query;
   const notices = await Notice_default.find({}).populate("sender", "name role").sort({ createdAt: -1 });
   const committeeNotices = notices.filter((n) => n.sender && n.sender.role === "committee");
-  res.json(committeeNotices.slice(0, 10));
+  if (limit) {
+    return res.json(committeeNotices.slice(0, Number(limit)));
+  }
+  res.json(committeeNotices);
+});
+var getPublicNoticeById = asyncHandler15(async (req, res) => {
+  const notice = await Notice_default.findById(req.params.id).populate("sender", "name role");
+  if (!notice || !notice.sender || notice.sender.role !== "committee") {
+    res.status(404);
+    throw new Error("Notice not found");
+  }
+  res.json(notice);
 });
 var getPublicStats = asyncHandler15(async (req, res) => {
   const studentCount = await User_default.countDocuments({ role: "student" });
-  const supervisorCount = await User_default.countDocuments({ role: { $in: ["supervisor", "committee"] } });
+  const supervisorCount = await User_default.countDocuments({ role: "supervisor" });
   const deptCount = await Department_default.countDocuments({});
   const proposalCount = await Proposal_default.countDocuments({});
   res.json({
@@ -2825,6 +2872,7 @@ var router15 = express15.Router();
 router15.get("/departments", getPublicDepartments);
 router15.get("/research-cells", getPublicResearchCells);
 router15.get("/notices", getPublicNotices);
+router15.get("/notices/:id", getPublicNoticeById);
 router15.get("/stats", getPublicStats);
 router15.get("/faculty/:departmentId", getFacultyByDepartment);
 router15.get("/faculty/profile/:id", getPublicFacultyProfile);
@@ -2836,46 +2884,64 @@ import express16 from "express";
 // src/controllers/aiController.ts
 import asyncHandler16 from "express-async-handler";
 import axios from "axios";
+var CHAT_MODELS = [
+  "google/gemini-2.0-flash-001",
+  "google/gemini-flash-1.5",
+  "meta-llama/llama-3.1-8b-instruct:free"
+];
+var callOpenRouter = async (apiKey, model, messages) => {
+  return axios.post(
+    "https://openrouter.ai/api/v1/chat/completions",
+    { model, messages },
+    {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": process.env.CLIENT_URL || "http://localhost:3000",
+        "X-Title": "ThesPro AI Assistant"
+      }
+    }
+  );
+};
 var chatWithAI = asyncHandler16(async (req, res) => {
   const { message, chatHistory } = req.body;
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     console.error("CRITICAL: OPENROUTER_API_KEY is not defined in process.env");
     res.status(500);
-    throw new Error("AI Service Configuration Error: API Key is missing. Please restart the server after adding the key to .env");
+    throw new Error("AI Service Configuration Error: API Key is missing.");
   }
-  try {
-    const response = await axios.post(
-      "https://openrouter.ai/api/v1/chat/completions",
-      {
-        model: "google/gemini-2.0-flash-001",
-        messages: [
-          {
-            role: "system",
-            content: "You are an helpful academic assistant for ThesPro, a thesis management system. Assist students with thesis topics, proposal writing, and general academic guidance."
-          },
-          ...chatHistory,
-          { role: "user", content: message }
-        ]
-      },
-      {
-        headers: {
-          "Authorization": `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "http://localhost:3000",
-          // Optional, for OpenRouter tracking
-          "X-Title": "ThesPro AI Assistant"
-          // Optional
-        }
+  const messages = [
+    {
+      role: "system",
+      content: "You are a helpful academic assistant for ThesPro, a thesis management system. Assist students with thesis topics, proposal writing, and general academic guidance."
+    },
+    ...chatHistory,
+    { role: "user", content: message }
+  ];
+  let lastError = null;
+  for (const model of CHAT_MODELS) {
+    try {
+      const response = await callOpenRouter(apiKey, model, messages);
+      const aiResponse = response.data.choices[0].message.content;
+      res.json({ response: aiResponse });
+      return;
+    } catch (error) {
+      const status = error.response?.status;
+      const errMsg = error.response?.data?.error?.message || "";
+      if (status === 404 || status === 400 && (errMsg.includes("endpoint") || errMsg.includes("model"))) {
+        console.warn(`Model ${model} unavailable, trying next...`);
+        lastError = error;
+        continue;
       }
-    );
-    const aiResponse = response.data.choices[0].message.content;
-    res.json({ response: aiResponse });
-  } catch (error) {
-    console.error("OpenRouter Error:", error.response?.data || error.message);
-    res.status(error.response?.status || 500);
-    throw new Error(error.response?.data?.error?.message || "AI service error. Please try again later.");
+      console.error("OpenRouter Error:", error.response?.data || error.message);
+      res.status(status || 500);
+      throw new Error(errMsg || "AI service error. Please try again later.");
+    }
   }
+  console.error("All AI models exhausted:", lastError?.response?.data || lastError?.message);
+  res.status(503);
+  throw new Error("AI assistant is temporarily unavailable. Please try again later.");
 });
 var generateProposalDescription = asyncHandler16(async (req, res) => {
   const { title } = req.body;

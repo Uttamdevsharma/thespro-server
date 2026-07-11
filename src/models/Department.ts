@@ -6,7 +6,11 @@ const DepartmentSchema = new mongoose.Schema({
     required: true,
     unique: true,
     trim: true,
-  }
+  },
+  abbreviation: {
+    type: String,
+    trim: true,
+  },
 }, { timestamps: true });
 
 export default mongoose.model('Department', DepartmentSchema);
