@@ -4,17 +4,48 @@ import ResearchCell from '../models/ResearchCell.js';
 import stringSimilarity from 'string-similarity';
 import asyncHandler from 'express-async-handler';
 import DefenseBoard from '../models/DefenseBoard.js';
+import ThesisCycle from '../models/ThesisCycle.js';
 import calculateGradeAndPoint from '../utils/gradeCalculator.js';
 import Evaluation from '../models/Evaluation.js';
+import PublishedResult from '../models/PublishedResult.js';
 
 // @desc    Create a new proposal
 // @route   POST /api/proposals
 // @access  Private (Student)
 const createProposal = asyncHandler(async (req, res) => {
-  const { title, abstract, type, researchCellId, supervisorId, members } = req.body;
+  const { title, abstract, type, researchCellId, supervisorId, members, thesisCycleId, cohortId } = req.body;
 
   const createdBy = req.user._id;
   const department = req.user.department;
+
+  // A student is always bound to their own cohort. Fall back to an explicitly
+  // provided id (e.g. admin/committee created) or the active cohort.
+  let resolvedCohortId: any = req.user.cohort || cohortId || thesisCycleId;
+  if (!resolvedCohortId) {
+    const activeCohort = await ThesisCycle.findOne({ status: 'Active', archived: false });
+    if (activeCohort) resolvedCohortId = activeCohort._id;
+  }
+
+  if (!resolvedCohortId) {
+    res.status(400);
+    throw new Error('No cohort is available for this proposal. Please contact the committee.');
+  }
+
+  const cohort = await ThesisCycle.findById(resolvedCohortId);
+  if (!cohort) {
+    res.status(400);
+    throw new Error('Selected cohort not found.');
+  }
+
+  // Enforce the cohort proposal-submission window
+  if (!cohort.proposalSubmissionOpen) {
+    res.status(403);
+    throw new Error('Proposal submission for this cohort is closed. Please wait for the next submission period.');
+  }
+  if (cohort.proposalSubmissionDeadline && new Date() > new Date(cohort.proposalSubmissionDeadline)) {
+    res.status(403);
+    throw new Error('Proposal submission for this cohort has ended. Please wait for the next submission period.');
+  }
 
   const supervisor = await User.findById(supervisorId);
   if (!supervisor) {
@@ -52,16 +83,30 @@ const createProposal = asyncHandler(async (req, res) => {
     throw new Error('Research cell not found.');
   }
 
+  // Cohort isolation: every invited member must belong to the same cohort
+  const memberIds = (members || []).map((m: any) => (m && m._id ? m._id : m));
+  if (memberIds.length > 0) {
+    const memberUsers = await User.find({ _id: { $in: memberIds } });
+    const foreign = memberUsers.find(
+      (m) => m.cohort && m.cohort.toString() !== resolvedCohortId.toString()
+    );
+    if (foreign) {
+      res.status(400);
+      throw new Error('You can only invite students from your own cohort.');
+    }
+  }
+
   const proposal = await Proposal.create({
     title,
     abstract,
     type,
     researchCellId,
     supervisorId,
-    members: [createdBy, ...members],
-    numberOfMembers: [createdBy, ...members].length,
+    members: [createdBy, ...memberIds],
+    numberOfMembers: [createdBy, ...memberIds].length,
     createdBy,
     department,
+    cohort: resolvedCohortId,
     status: 'Pending Committee',
   });
 
@@ -72,7 +117,7 @@ const createProposal = asyncHandler(async (req, res) => {
 // @route   GET /api/proposals/supervisor-proposals
 // @access  Private (Supervisor)
 const getSupervisorProposals = asyncHandler(async (req, res) => {
-  const { filter } = req.query;
+  const { filter, cohortId } = req.query;
   const supervisorId = req.user._id;
   let query = {};
 
@@ -92,10 +137,13 @@ const getSupervisorProposals = asyncHandler(async (req, res) => {
     };
   }
 
+  if (cohortId) query.cohort = cohortId;
+
   const proposals = await Proposal.find(query)
     .populate('createdBy', 'name email studentId currentCGPA')
     .populate('supervisorId', 'name email')
     .populate('researchCellId', 'title')
+    .populate('cohort', 'name')
     .populate('members', 'name email studentId currentCGPA');
 
   res.json(proposals);
@@ -105,14 +153,18 @@ const getSupervisorProposals = asyncHandler(async (req, res) => {
 // @route   GET /api/proposals/supervisor-pending-proposals
 // @access  Private (Supervisor)
 const getSupervisorPendingProposals = asyncHandler(async (req, res) => {
-  const proposals = await Proposal.find({
+  const { cohortId } = req.query;
+  const pendingQuery: any = {
     supervisorId: req.user._id,
     status: { $in: ['Pending Committee', 'Pending Supervisor'] }
-  });
+  };
+  if (cohortId) pendingQuery.cohort = cohortId;
+  const proposals = await Proposal.find(pendingQuery);
   await Proposal.populate(proposals, [
     { path: 'createdBy', select: 'name email studentId currentCGPA' },
     { path: 'supervisorId', select: 'name email' },
     { path: 'researchCellId', select: 'title' },
+    { path: 'cohort', select: 'name' },
     { path: 'members', select: 'name email studentId currentCGPA' },
   ]);
   res.json(proposals);
@@ -122,6 +174,7 @@ const getSupervisorPendingProposals = asyncHandler(async (req, res) => {
 // @route   GET /api/proposals/student-proposals
 // @access  Private (Student)
 const getStudentProposals = asyncHandler(async (req, res) => {
+  const { cohortId } = req.query;
   const studentId = req.user._id;
   const proposals = await Proposal.find({
     $or: [
@@ -132,6 +185,7 @@ const getStudentProposals = asyncHandler(async (req, res) => {
     .populate('createdBy', 'name email studentId currentCGPA')
     .populate('supervisorId', 'name email')
     .populate('researchCellId', 'title')
+    .populate('cohort', 'name')
     .populate('members', 'name email studentId currentCGPA')
   res.json(proposals);
 });
@@ -140,10 +194,14 @@ const getStudentProposals = asyncHandler(async (req, res) => {
 // @route   GET /api/proposals/committee-proposals
 // @access  Private (Committee)
 const getCommitteeProposals = asyncHandler(async (req, res) => {
-  const proposals = await Proposal.find({ department: req.user.department })
+  const { cohortId } = req.query;
+  const committeeQuery: any = { department: req.user.department };
+  if (cohortId) committeeQuery.cohort = cohortId;
+  const proposals = await Proposal.find(committeeQuery)
     .populate('createdBy', 'name email studentId')
     .populate('supervisorId', 'name email')
-    .populate('researchCellId', 'title');
+    .populate('researchCellId', 'title')
+    .populate('cohort', 'name');
 
   res.json(proposals);
 });
@@ -276,8 +334,11 @@ const rejectProposal = asyncHandler(async (req, res) => {
 // @route   GET /api/proposals/pending-by-cell
 // @access  Private (Committee)
 const getPendingProposalsByCell = asyncHandler(async (req, res) => {
+  const { cohortId } = req.query;
+  const matchStage: any = { status: 'Pending Committee' };
+  if (cohortId) matchStage.cohort = new mongoose.Types.ObjectId(cohortId);
   const proposals = await Proposal.aggregate([
-    { $match: { status: 'Pending Committee' } },
+    { $match: matchStage },
     {
       $lookup: {
         from: 'users',
@@ -326,30 +387,32 @@ const getPendingProposalsByCell = asyncHandler(async (req, res) => {
               type: '$$proposal.type',
               researchCellId: '$$proposal.researchCellId',
               supervisorId: '$$proposal.supervisorId',
+              cohort: '$$proposal.cohort',
               status: '$$proposal.status',
-              feedback: '$$proposal.feedback',
-              reviewedAt: '$$proposal.reviewedAt',
-              department: '$$proposal.department',
-              createdAt: '$$proposal.createdAt',
-              updatedAt: '$$proposal.updatedAt',
-              createdBy: {
-                _id: '$$proposal.createdBy._id',
-                name: '$$proposal.createdBy.name',
-                studentId: '$$proposal.createdBy.studentId',
-                currentCGPA: '$$proposal.createdBy.currentCGPA',
+          feedback: '$$proposal.feedback',
+          reviewedAt: '$$proposal.reviewedAt',
+          department: '$$proposal.department',
+          createdAt: '$$proposal.createdAt',
+          updatedAt: '$$proposal.updatedAt',
+          createdBy: {
+            _id: '$$proposal.createdBy._id',
+            name: '$$proposal.createdBy.name',
+            studentId: '$$proposal.createdBy.studentId',
+            currentCGPA: '$$proposal.createdBy.currentCGPA',
+          },
+          cohort: '$$proposal.cohort',
+          members: {
+            $map: {
+              input: '$$proposal.members',
+              as: 'member',
+              in: {
+                _id: '$$member._id',
+                name: '$$member.name',
+                studentId: '$$member.studentId',
+                currentCGPA: '$$member.currentCGPA',
               },
-              members: {
-                $map: {
-                  input: '$$proposal.members',
-                  as: 'member',
-                  in: {
-                    _id: '$$member._id',
-                    name: '$$member.name',
-                    studentId: '$$member.studentId',
-                    currentCGPA: '$$member.currentCGPA',
-                  },
-                },
-              },
+            },
+          },
             },
           },
         },
@@ -365,10 +428,14 @@ const getPendingProposalsByCell = asyncHandler(async (req, res) => {
 // @route   GET /api/proposals/approved-proposals
 // @access  Private (Committee)
 const getApprovedProposals = asyncHandler(async (req, res) => {
-  const proposals = await Proposal.find({ status: 'Approved' })
+  const { cohortId } = req.query;
+  const approvedQuery: any = { status: 'Approved' };
+  if (cohortId) approvedQuery.cohort = cohortId;
+  const proposals = await Proposal.find(approvedQuery)
     .populate('createdBy', 'name studentId currentCGPA')
     .populate('supervisorId', 'name')
     .populate('researchCellId', 'title')
+    .populate('cohort', 'name')
     .populate('members', 'name studentId currentCGPA');
 
   res.json(proposals);
@@ -378,25 +445,25 @@ const getApprovedProposals = asyncHandler(async (req, res) => {
 // @route   GET /api/proposals/available-proposals
 // @access  Private (Committee)
 const getAvailableProposals = asyncHandler(async (req, res) => {
-  const { defenseType } = req.query; // 'Pre-Defense' or 'Final Defense'
+  const { defenseType, cohortId } = req.query; // 'Pre-Defense' or 'Final Defense'
 
   let assignedProposalsInDefenseBoards = [];
 
   if (defenseType === 'Final Defense') {
-    // For Final Defense, we only exclude proposals already assigned to a Final Defense board
     const finalDefenseBoards = await DefenseBoard.find({ defenseType: 'Final Defense' }, 'groups');
     assignedProposalsInDefenseBoards = finalDefenseBoards.flatMap(board => board.groups);
   } else {
-    // For Pre-Defense or if no type is specified (default to Pre-Defense logic),
-    // exclude proposals already assigned to ANY defense board.
     const allDefenseBoards = await DefenseBoard.find({}, 'groups');
     assignedProposalsInDefenseBoards = allDefenseBoards.flatMap(board => board.groups);
   }
 
-  const proposals = await Proposal.find({
+  const availableQuery: any = {
     status: 'Approved',
     _id: { $nin: assignedProposalsInDefenseBoards }
-  })
+  };
+  if (cohortId) availableQuery.cohort = cohortId;
+
+  const proposals = await Proposal.find(availableQuery)
     .populate('createdBy', 'name studentId currentCGPA')
     .populate('supervisorId', 'name')
     .populate('courseSupervisorId', 'name')
@@ -411,14 +478,18 @@ const getAvailableProposals = asyncHandler(async (req, res) => {
 // @access  Private (Supervisor)
 const getSupervisorAllGroups = asyncHandler(async (req, res) => {
   const supervisorId = req.user._id;
+  const { cohortId } = req.query;
 
-  const proposals = await Proposal.find({
+  const groupsQuery: any = {
     $or: [
       { supervisorId: supervisorId },
       { courseSupervisorId: supervisorId }
     ],
     status: 'Approved'
-  })
+  };
+  if (cohortId) groupsQuery.cohort = cohortId;
+
+  const proposals = await Proposal.find(groupsQuery)
     .populate('createdBy', 'name studentId currentCGPA')
     .populate('supervisorId', 'name')
     .populate('courseSupervisorId', 'name')
@@ -448,14 +519,18 @@ const getSupervisorAllGroups = asyncHandler(async (req, res) => {
 
 const getMySupervisions = asyncHandler(async (req, res) => {
   const supervisorId = req.user._id;
+  const { thesisCycleId } = req.query;
 
-  const proposals = await Proposal.find({
+  const supervisionsQuery: any = {
     $or: [
       { supervisorId: supervisorId },
       { coSupervisors: supervisorId }
     ],
     status: 'Approved'
-  })
+  };
+  if (thesisCycleId) supervisionsQuery.cohort = thesisCycleId;
+
+  const proposals = await Proposal.find(supervisionsQuery)
   .populate('members', 'name email');
 
   res.json(proposals);
@@ -468,7 +543,8 @@ const getProposalById = asyncHandler(async (req, res) => {
   const proposal = await Proposal.findById(req.params.id)
     .populate('members', 'name email studentId')
     .populate('supervisorId', 'name email')
-    .populate('coSupervisors', 'name email'); // Populate coSupervisors
+    .populate('coSupervisors', 'name email')
+    .populate('cohort', 'name');
 
   if (proposal) {
     console.log(`[getProposalById] Fetched proposal ID: ${proposal._id}`);
@@ -538,14 +614,27 @@ const publishResult = asyncHandler(async (req, res) => {
     });
   }
 
-  // For now, let's assume all students in a group get the same grade and point.
-  // We will update the proposal with the grade and point of the first student.
-  // A better approach would be to store individual results, but for now this will work.
   if (studentResults.length > 0) {
     proposal.published = true;
     proposal.grade = studentResults[0].grade;
     proposal.point = studentResults[0].point;
     await proposal.save();
+
+    for (const result of studentResults) {
+      await PublishedResult.findOneAndUpdate(
+        { student: result.studentId },
+        {
+          student: result.studentId,
+          proposal: id,
+          cohort: proposal.cohort || null,
+          grade: result.grade,
+          point: result.point,
+          courseCode: '',
+          courseTitle: '',
+        },
+        { upsert: true }
+      );
+    }
   }
 
   res.status(200).json(proposal);

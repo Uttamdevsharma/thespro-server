@@ -1,16 +1,16 @@
 // src/app.ts
 import "dotenv/config";
-import express17 from "express";
-import mongoose13 from "mongoose";
+import express18 from "express";
+import mongoose15 from "mongoose";
 import cors from "cors";
 
 // src/routes/authRoutes.ts
 import express from "express";
 
 // src/models/User.ts
-import mongoose from "mongoose";
+import mongoose2 from "mongoose";
 import bcrypt from "bcryptjs";
-var UserSchema = new mongoose.Schema({
+var UserSchema = new mongoose2.Schema({
   name: {
     type: String,
     required: function() {
@@ -32,22 +32,25 @@ var UserSchema = new mongoose.Schema({
     default: "student"
   },
   department: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: mongoose2.Schema.Types.ObjectId,
     ref: "Department"
+  },
+  cohort: {
+    type: mongoose2.Schema.Types.ObjectId,
+    ref: "Cohort",
+    default: null
   },
   studentId: {
     type: String,
-    unique: function() {
-      return this.role === "student" && this.studentId;
-    }
-    // Only unique if provided
+    sparse: true
+    // Allow multiple docs with null/undefined studentId (set later at profile completion)
   },
   profilePicture: {
     type: String,
     default: ""
   },
   researchCells: [{
-    type: mongoose.Schema.Types.ObjectId,
+    type: mongoose2.Schema.Types.ObjectId,
     ref: "ResearchCell",
     default: []
   }],
@@ -73,7 +76,7 @@ var UserSchema = new mongoose.Schema({
     default: false
   },
   mainSupervisor: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: mongoose2.Schema.Types.ObjectId,
     ref: "User",
     required: function() {
       return this.isCourseSupervisor;
@@ -109,7 +112,87 @@ UserSchema.pre("save", async function(next) {
 UserSchema.methods.matchPassword = async function(enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
-var User_default = mongoose.model("User", UserSchema);
+UserSchema.index(
+  { studentId: 1 },
+  {
+    unique: true,
+    name: "studentId_1",
+    partialFilterExpression: { role: "student", studentId: { $exists: true, $ne: null } }
+  }
+);
+var User_default = mongoose2.model("User", UserSchema);
+
+// src/models/ThesisCycle.ts
+import mongoose3 from "mongoose";
+var CohortSchema = new mongoose3.Schema({
+  name: {
+    type: String,
+    required: [true, "Cohort name is required"],
+    unique: true,
+    trim: true
+  },
+  description: {
+    type: String,
+    trim: true
+  },
+  academicYear: {
+    type: String,
+    trim: true
+  },
+  semester: {
+    type: String,
+    trim: true
+  },
+  startSemester: {
+    type: String,
+    trim: true
+  },
+  endSemester: {
+    type: String,
+    trim: true
+  },
+  registrationStartDate: {
+    type: Date,
+    required: [true, "Registration start date is required"]
+  },
+  registrationEndDate: {
+    type: Date,
+    required: [true, "Registration end date is required"]
+  },
+  status: {
+    type: String,
+    enum: {
+      values: ["Upcoming", "Active", "Closed", "Archived"],
+      message: "{VALUE} is not a valid cohort status"
+    },
+    default: "Upcoming"
+  },
+  proposalSubmissionOpen: {
+    type: Boolean,
+    default: false
+  },
+  proposalSubmissionDeadline: {
+    type: Date
+  },
+  defensePhase: {
+    type: String,
+    enum: {
+      values: ["Pre-Defense", "Final Defense", null],
+      message: "{VALUE} is not a valid defense phase"
+    },
+    default: null
+  },
+  archived: {
+    type: Boolean,
+    default: false
+  },
+  createdBy: {
+    type: mongoose3.Schema.Types.ObjectId,
+    ref: "User",
+    required: true
+  }
+}, { timestamps: true });
+var ThesisCycle_default = mongoose3.model("Cohort", CohortSchema);
 
 // src/utils/generateToken.ts
 import jwt from "jsonwebtoken";
@@ -123,22 +206,65 @@ var generateToken_default = generateToken;
 // src/controllers/authController.ts
 import asyncHandler from "express-async-handler";
 import { OAuth2Client } from "google-auth-library";
+var isRegistrationOpen = (cycle) => {
+  if (!cycle || cycle.archived) return false;
+  if (cycle.status === "Closed") return false;
+  if (cycle.proposalSubmissionOpen === true) return true;
+  const now = /* @__PURE__ */ new Date();
+  const start = cycle.registrationStartDate ? new Date(cycle.registrationStartDate) : null;
+  const end = cycle.registrationEndDate ? new Date(cycle.registrationEndDate) : null;
+  if (start || end) {
+    if (start && now < start) return false;
+    if (end && now > end) return false;
+    return true;
+  }
+  return cycle.status === "Active";
+};
+var resolveRegistrationCohort = async (cohortId) => {
+  if (cohortId) {
+    const cohort = await ThesisCycle_default.findById(cohortId);
+    if (!cohort || cohort.archived || !isRegistrationOpen(cohort)) {
+      const err2 = new Error("The selected cohort is not open for registration.");
+      err2.status = 400;
+      throw err2;
+    }
+    return cohort._id;
+  }
+  const openCohorts = (await ThesisCycle_default.find({ archived: false })).filter((c) => isRegistrationOpen(c));
+  if (openCohorts.length === 0) {
+    const err2 = new Error("Registration for the current cohort has ended. Please wait for the next registration period.");
+    err2.status = 403;
+    throw err2;
+  }
+  if (openCohorts.length === 1) {
+    return openCohorts[0]._id;
+  }
+  const err = new Error("Multiple cohorts are open for registration. Please select one.");
+  err.status = 400;
+  throw err;
+};
 var registerUser = asyncHandler(async (req, res) => {
-  console.log("registerUser called with body:", req.body);
-  const { name, email, password } = req.body;
+  const { name, email, password, cohortId } = req.body;
   const userExists = await User_default.findOne({ email });
   if (userExists) {
     res.status(400);
     throw new Error("User already exists");
   }
+  let assignedCohort;
+  try {
+    assignedCohort = await resolveRegistrationCohort(cohortId);
+  } catch (err) {
+    res.status(err.status || 400);
+    throw new Error(err.message);
+  }
   const user = await User_default.create({
     name,
     email,
     password,
-    role: "student"
+    role: "student",
     // Default role for public registration
+    cohort: assignedCohort
   });
-  console.log("user created:", user);
   if (user) {
     res.status(201).json({
       _id: user._id,
@@ -149,6 +275,7 @@ var registerUser = asyncHandler(async (req, res) => {
       profilePicture: user.profilePicture,
       department: user.department,
       currentCGPA: user.currentCGPA,
+      cohort: user.cohort,
       token: generateToken_default(user._id)
     });
   } else {
@@ -172,6 +299,7 @@ var loginUser = asyncHandler(async (req, res) => {
       profilePicture: user.profilePicture,
       department: user.department || null,
       currentCGPA: user.currentCGPA,
+      cohort: user.cohort || null,
       token: generateToken_default(user._id),
       currentGroupCount: user.currentGroupCount
     });
@@ -187,15 +315,18 @@ var client = new OAuth2Client(
   process.env.GOOGLE_CALLBACK_URL
 );
 var googleAuth = asyncHandler(async (req, res) => {
+  const cohortId = req.query.cohortId;
+  const state = cohortId ? Buffer.from(JSON.stringify({ cohortId })).toString("base64") : void 0;
   const url = client.generateAuthUrl({
     access_type: "offline",
     scope: ["profile", "email"],
-    prompt: "consent"
+    prompt: "consent",
+    ...state ? { state } : {}
   });
   res.redirect(url);
 });
 var googleCallback = asyncHandler(async (req, res) => {
-  const { code } = req.query;
+  const { code, state } = req.query;
   const { tokens } = await client.getToken(code);
   client.setCredentials(tokens);
   const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
@@ -207,6 +338,25 @@ var googleCallback = asyncHandler(async (req, res) => {
     throw new Error("Google account must have an email");
   }
   let user = await User_default.findOne({ email: googleUser.email });
+  let requestedCohortId;
+  if (state) {
+    try {
+      requestedCohortId = JSON.parse(Buffer.from(state, "base64").toString()).cohortId;
+    } catch {
+      requestedCohortId = void 0;
+    }
+  }
+  let assignedCohort = user?.cohort || null;
+  if (!assignedCohort && requestedCohortId) {
+    const cohort = await ThesisCycle_default.findById(requestedCohortId);
+    if (cohort && !cohort.archived && isRegistrationOpen(cohort)) {
+      assignedCohort = cohort._id;
+    }
+  }
+  if (!assignedCohort) {
+    const openCohorts = (await ThesisCycle_default.find({ archived: false })).filter((c) => isRegistrationOpen(c));
+    if (openCohorts.length === 1) assignedCohort = openCohorts[0]._id;
+  }
   if (!user) {
     user = await User_default.create({
       name: googleUser.name,
@@ -215,8 +365,12 @@ var googleCallback = asyncHandler(async (req, res) => {
       // Dummy password for Google users
       role: "student",
       // Default role for Google login
-      profilePicture: googleUser.picture
+      profilePicture: googleUser.picture,
+      cohort: assignedCohort
     });
+  } else if (!user.cohort && assignedCohort) {
+    user.cohort = assignedCohort;
+    await user.save();
   }
   const token = generateToken_default(user._id);
   const userData = {
@@ -228,6 +382,7 @@ var googleCallback = asyncHandler(async (req, res) => {
     profilePicture: user.profilePicture,
     department: user.department,
     currentCGPA: user.currentCGPA,
+    cohort: user.cohort,
     token
   };
   const encodedUser = Buffer.from(JSON.stringify(userData)).toString("base64");
@@ -247,8 +402,8 @@ var authRoutes_default = router;
 import express2 from "express";
 
 // src/models/ResearchCell.ts
-import mongoose2 from "mongoose";
-var ResearchCellSchema = new mongoose2.Schema({
+import mongoose4 from "mongoose";
+var ResearchCellSchema = new mongoose4.Schema({
   title: {
     type: String,
     required: true,
@@ -263,7 +418,7 @@ var ResearchCellSchema = new mongoose2.Schema({
     required: true
   }
 }, { timestamps: true });
-var ResearchCell_default = mongoose2.model("ResearchCell", ResearchCellSchema);
+var ResearchCell_default = mongoose4.model("ResearchCell", ResearchCellSchema);
 
 // src/controllers/researchCellController.ts
 import asyncHandler2 from "express-async-handler";
@@ -334,8 +489,8 @@ var researchCellRoutes_default = router2;
 import express3 from "express";
 
 // src/models/Proposal.ts
-import mongoose3 from "mongoose";
-var ProposalSchema = new mongoose3.Schema({
+import mongoose5 from "mongoose";
+var ProposalSchema = new mongoose5.Schema({
   title: {
     type: String,
     required: true
@@ -350,29 +505,29 @@ var ProposalSchema = new mongoose3.Schema({
     default: "Thesis"
   },
   researchCellId: {
-    type: mongoose3.Schema.Types.ObjectId,
+    type: mongoose5.Schema.Types.ObjectId,
     ref: "ResearchCell",
     required: true
   },
   supervisorId: {
-    type: mongoose3.Schema.Types.ObjectId,
+    type: mongoose5.Schema.Types.ObjectId,
     ref: "User",
     required: true
   },
   coSupervisors: [
     {
-      type: mongoose3.Schema.Types.ObjectId,
+      type: mongoose5.Schema.Types.ObjectId,
       ref: "User"
     }
   ],
   courseSupervisorId: {
-    type: mongoose3.Schema.Types.ObjectId,
+    type: mongoose5.Schema.Types.ObjectId,
     ref: "User",
     default: null
   },
   members: [
     {
-      type: mongoose3.Schema.Types.ObjectId,
+      type: mongoose5.Schema.Types.ObjectId,
       ref: "User"
     }
   ],
@@ -393,7 +548,7 @@ var ProposalSchema = new mongoose3.Schema({
     type: Date
   },
   createdBy: {
-    type: mongoose3.Schema.Types.ObjectId,
+    type: mongoose5.Schema.Types.ObjectId,
     ref: "User",
     required: true
   },
@@ -401,8 +556,13 @@ var ProposalSchema = new mongoose3.Schema({
     type: String,
     required: true
   },
+  cohort: {
+    type: mongoose5.Schema.Types.ObjectId,
+    ref: "Cohort",
+    default: null
+  },
   defenseBoardId: {
-    type: mongoose3.Schema.Types.ObjectId,
+    type: mongoose5.Schema.Types.ObjectId,
     ref: "DefenseBoard",
     default: null
   },
@@ -419,15 +579,15 @@ var ProposalSchema = new mongoose3.Schema({
     default: null
   }
 }, { timestamps: true });
-var Proposal_default = mongoose3.model("Proposal", ProposalSchema);
+var Proposal_default = mongoose5.model("Proposal", ProposalSchema);
 
 // src/controllers/proposalController.ts
 import stringSimilarity from "string-similarity";
 import asyncHandler3 from "express-async-handler";
 
 // src/models/DefenseBoard.ts
-import mongoose4 from "mongoose";
-var DefenseBoardSchema = new mongoose4.Schema(
+import mongoose6 from "mongoose";
+var DefenseBoardSchema = new mongoose6.Schema(
   {
     boardNumber: {
       type: String,
@@ -439,12 +599,12 @@ var DefenseBoardSchema = new mongoose4.Schema(
       enum: ["Pre-Defense", "Final Defense"]
     },
     room: {
-      type: mongoose4.Schema.Types.ObjectId,
+      type: mongoose6.Schema.Types.ObjectId,
       ref: "Room",
       required: true
     },
     schedule: {
-      type: mongoose4.Schema.Types.ObjectId,
+      type: mongoose6.Schema.Types.ObjectId,
       ref: "ScheduleSlot",
       required: true
     },
@@ -454,35 +614,40 @@ var DefenseBoardSchema = new mongoose4.Schema(
     },
     groups: [
       {
-        type: mongoose4.Schema.Types.ObjectId,
+        type: mongoose6.Schema.Types.ObjectId,
         ref: "Proposal",
         required: true
       }
     ],
+    cohort: {
+      type: mongoose6.Schema.Types.ObjectId,
+      ref: "Cohort",
+      default: null
+    },
     comments: [
       {
         group: {
-          type: mongoose4.Schema.Types.ObjectId,
+          type: mongoose6.Schema.Types.ObjectId,
           ref: "Proposal"
         },
         text: {
           type: String
         },
         commentedBy: {
-          type: mongoose4.Schema.Types.ObjectId,
+          type: mongoose6.Schema.Types.ObjectId,
           ref: "User"
         }
       }
     ],
     boardMembers: [
       {
-        type: mongoose4.Schema.Types.ObjectId,
+        type: mongoose6.Schema.Types.ObjectId,
         ref: "User",
         required: true
       }
     ],
     createdBy: {
-      type: mongoose4.Schema.Types.ObjectId,
+      type: mongoose6.Schema.Types.ObjectId,
       ref: "User",
       required: true
     },
@@ -493,7 +658,7 @@ var DefenseBoardSchema = new mongoose4.Schema(
           // e.g., 'CREATED', 'UPDATED', 'DELETED'
         },
         user: {
-          type: mongoose4.Schema.Types.ObjectId,
+          type: mongoose6.Schema.Types.ObjectId,
           ref: "User"
         },
         timestamp: {
@@ -505,7 +670,7 @@ var DefenseBoardSchema = new mongoose4.Schema(
   },
   { timestamps: true }
 );
-var DefenseBoard = mongoose4.model("DefenseBoard", DefenseBoardSchema);
+var DefenseBoard = mongoose6.model("DefenseBoard", DefenseBoardSchema);
 var DefenseBoard_default = DefenseBoard;
 
 // src/utils/gradeCalculator.ts
@@ -535,22 +700,27 @@ var calculateGradeAndPoint = (totalMarks) => {
 var gradeCalculator_default = calculateGradeAndPoint;
 
 // src/models/Evaluation.ts
-import mongoose5 from "mongoose";
-var evaluationSchema = new mongoose5.Schema({
+import mongoose7 from "mongoose";
+var evaluationSchema = new mongoose7.Schema({
   student: {
-    type: mongoose5.Schema.Types.ObjectId,
+    type: mongoose7.Schema.Types.ObjectId,
     ref: "User",
     required: true
   },
   evaluator: {
-    type: mongoose5.Schema.Types.ObjectId,
+    type: mongoose7.Schema.Types.ObjectId,
     ref: "User",
     required: true
   },
   proposal: {
-    type: mongoose5.Schema.Types.ObjectId,
+    type: mongoose7.Schema.Types.ObjectId,
     ref: "Proposal",
     required: true
+  },
+  cohort: {
+    type: mongoose7.Schema.Types.ObjectId,
+    ref: "Cohort",
+    default: null
   },
   defenseType: {
     type: String,
@@ -590,14 +760,76 @@ evaluationSchema.path("marks").validate(function(value) {
   }
   return false;
 }, "Marks exceed the limit for the selected evaluation type.");
-var Evaluation = mongoose5.model("Evaluation", evaluationSchema);
+var Evaluation = mongoose7.model("Evaluation", evaluationSchema);
 var Evaluation_default = Evaluation;
+
+// src/models/PublishedResult.ts
+import mongoose8 from "mongoose";
+var PublishedResultSchema = new mongoose8.Schema({
+  student: {
+    type: mongoose8.Schema.Types.ObjectId,
+    ref: "User",
+    required: true,
+    unique: true
+    // Each student can have only one published result
+  },
+  proposal: {
+    type: mongoose8.Schema.Types.ObjectId,
+    ref: "Proposal",
+    required: true
+  },
+  cohort: {
+    type: mongoose8.Schema.Types.ObjectId,
+    ref: "Cohort",
+    default: null
+  },
+  grade: {
+    type: String,
+    required: true
+  },
+  point: {
+    type: Number,
+    required: true
+  },
+  courseCode: {
+    type: String,
+    required: true
+  },
+  courseTitle: {
+    type: String,
+    required: true
+  }
+}, { timestamps: true });
+var PublishedResult = mongoose8.model("PublishedResult", PublishedResultSchema);
+var PublishedResult_default = PublishedResult;
 
 // src/controllers/proposalController.ts
 var createProposal = asyncHandler3(async (req, res) => {
-  const { title, abstract, type, researchCellId, supervisorId, members } = req.body;
+  const { title, abstract, type, researchCellId, supervisorId, members, thesisCycleId, cohortId } = req.body;
   const createdBy = req.user._id;
   const department = req.user.department;
+  let resolvedCohortId = req.user.cohort || cohortId || thesisCycleId;
+  if (!resolvedCohortId) {
+    const activeCohort = await ThesisCycle_default.findOne({ status: "Active", archived: false });
+    if (activeCohort) resolvedCohortId = activeCohort._id;
+  }
+  if (!resolvedCohortId) {
+    res.status(400);
+    throw new Error("No cohort is available for this proposal. Please contact the committee.");
+  }
+  const cohort = await ThesisCycle_default.findById(resolvedCohortId);
+  if (!cohort) {
+    res.status(400);
+    throw new Error("Selected cohort not found.");
+  }
+  if (!cohort.proposalSubmissionOpen) {
+    res.status(403);
+    throw new Error("Proposal submission for this cohort is closed. Please wait for the next submission period.");
+  }
+  if (cohort.proposalSubmissionDeadline && /* @__PURE__ */ new Date() > new Date(cohort.proposalSubmissionDeadline)) {
+    res.status(403);
+    throw new Error("Proposal submission for this cohort has ended. Please wait for the next submission period.");
+  }
   const supervisor = await User_default.findById(supervisorId);
   if (!supervisor) {
     res.status(404);
@@ -626,22 +858,34 @@ var createProposal = asyncHandler3(async (req, res) => {
     res.status(400);
     throw new Error("Research cell not found.");
   }
+  const memberIds = (members || []).map((m) => m && m._id ? m._id : m);
+  if (memberIds.length > 0) {
+    const memberUsers = await User_default.find({ _id: { $in: memberIds } });
+    const foreign = memberUsers.find(
+      (m) => m.cohort && m.cohort.toString() !== resolvedCohortId.toString()
+    );
+    if (foreign) {
+      res.status(400);
+      throw new Error("You can only invite students from your own cohort.");
+    }
+  }
   const proposal = await Proposal_default.create({
     title,
     abstract,
     type,
     researchCellId,
     supervisorId,
-    members: [createdBy, ...members],
-    numberOfMembers: [createdBy, ...members].length,
+    members: [createdBy, ...memberIds],
+    numberOfMembers: [createdBy, ...memberIds].length,
     createdBy,
     department,
+    cohort: resolvedCohortId,
     status: "Pending Committee"
   });
   res.status(201).json(proposal);
 });
 var getSupervisorProposals = asyncHandler3(async (req, res) => {
-  const { filter } = req.query;
+  const { filter, cohortId } = req.query;
   const supervisorId = req.user._id;
   let query = {};
   if (filter === "my_supervision") {
@@ -659,34 +903,43 @@ var getSupervisorProposals = asyncHandler3(async (req, res) => {
       status: { $nin: ["Pending Committee", "Pending Supervisor", "Not Approved"] }
     };
   }
-  const proposals = await Proposal_default.find(query).populate("createdBy", "name email studentId currentCGPA").populate("supervisorId", "name email").populate("researchCellId", "title").populate("members", "name email studentId currentCGPA");
+  if (cohortId) query.cohort = cohortId;
+  const proposals = await Proposal_default.find(query).populate("createdBy", "name email studentId currentCGPA").populate("supervisorId", "name email").populate("researchCellId", "title").populate("cohort", "name").populate("members", "name email studentId currentCGPA");
   res.json(proposals);
 });
 var getSupervisorPendingProposals = asyncHandler3(async (req, res) => {
-  const proposals = await Proposal_default.find({
+  const { cohortId } = req.query;
+  const pendingQuery = {
     supervisorId: req.user._id,
     status: { $in: ["Pending Committee", "Pending Supervisor"] }
-  });
+  };
+  if (cohortId) pendingQuery.cohort = cohortId;
+  const proposals = await Proposal_default.find(pendingQuery);
   await Proposal_default.populate(proposals, [
     { path: "createdBy", select: "name email studentId currentCGPA" },
     { path: "supervisorId", select: "name email" },
     { path: "researchCellId", select: "title" },
+    { path: "cohort", select: "name" },
     { path: "members", select: "name email studentId currentCGPA" }
   ]);
   res.json(proposals);
 });
 var getStudentProposals = asyncHandler3(async (req, res) => {
+  const { cohortId } = req.query;
   const studentId = req.user._id;
   const proposals = await Proposal_default.find({
     $or: [
       { createdBy: studentId },
       { members: studentId }
     ]
-  }).populate("createdBy", "name email studentId currentCGPA").populate("supervisorId", "name email").populate("researchCellId", "title").populate("members", "name email studentId currentCGPA");
+  }).populate("createdBy", "name email studentId currentCGPA").populate("supervisorId", "name email").populate("researchCellId", "title").populate("cohort", "name").populate("members", "name email studentId currentCGPA");
   res.json(proposals);
 });
 var getCommitteeProposals = asyncHandler3(async (req, res) => {
-  const proposals = await Proposal_default.find({ department: req.user.department }).populate("createdBy", "name email studentId").populate("supervisorId", "name email").populate("researchCellId", "title");
+  const { cohortId } = req.query;
+  const committeeQuery = { department: req.user.department };
+  if (cohortId) committeeQuery.cohort = cohortId;
+  const proposals = await Proposal_default.find(committeeQuery).populate("createdBy", "name email studentId").populate("supervisorId", "name email").populate("researchCellId", "title").populate("cohort", "name");
   res.json(proposals);
 });
 var updateProposalStatus = asyncHandler3(async (req, res) => {
@@ -780,8 +1033,11 @@ var rejectProposal = asyncHandler3(async (req, res) => {
   res.json(updatedProposal);
 });
 var getPendingProposalsByCell = asyncHandler3(async (req, res) => {
+  const { cohortId } = req.query;
+  const matchStage = { status: "Pending Committee" };
+  if (cohortId) matchStage.cohort = new mongoose.Types.ObjectId(cohortId);
   const proposals = await Proposal_default.aggregate([
-    { $match: { status: "Pending Committee" } },
+    { $match: matchStage },
     {
       $lookup: {
         from: "users",
@@ -830,6 +1086,7 @@ var getPendingProposalsByCell = asyncHandler3(async (req, res) => {
               type: "$$proposal.type",
               researchCellId: "$$proposal.researchCellId",
               supervisorId: "$$proposal.supervisorId",
+              cohort: "$$proposal.cohort",
               status: "$$proposal.status",
               feedback: "$$proposal.feedback",
               reviewedAt: "$$proposal.reviewedAt",
@@ -842,6 +1099,7 @@ var getPendingProposalsByCell = asyncHandler3(async (req, res) => {
                 studentId: "$$proposal.createdBy.studentId",
                 currentCGPA: "$$proposal.createdBy.currentCGPA"
               },
+              cohort: "$$proposal.cohort",
               members: {
                 $map: {
                   input: "$$proposal.members",
@@ -864,11 +1122,14 @@ var getPendingProposalsByCell = asyncHandler3(async (req, res) => {
   res.json(proposals);
 });
 var getApprovedProposals = asyncHandler3(async (req, res) => {
-  const proposals = await Proposal_default.find({ status: "Approved" }).populate("createdBy", "name studentId currentCGPA").populate("supervisorId", "name").populate("researchCellId", "title").populate("members", "name studentId currentCGPA");
+  const { cohortId } = req.query;
+  const approvedQuery = { status: "Approved" };
+  if (cohortId) approvedQuery.cohort = cohortId;
+  const proposals = await Proposal_default.find(approvedQuery).populate("createdBy", "name studentId currentCGPA").populate("supervisorId", "name").populate("researchCellId", "title").populate("cohort", "name").populate("members", "name studentId currentCGPA");
   res.json(proposals);
 });
 var getAvailableProposals = asyncHandler3(async (req, res) => {
-  const { defenseType } = req.query;
+  const { defenseType, cohortId } = req.query;
   let assignedProposalsInDefenseBoards = [];
   if (defenseType === "Final Defense") {
     const finalDefenseBoards = await DefenseBoard_default.find({ defenseType: "Final Defense" }, "groups");
@@ -877,21 +1138,26 @@ var getAvailableProposals = asyncHandler3(async (req, res) => {
     const allDefenseBoards = await DefenseBoard_default.find({}, "groups");
     assignedProposalsInDefenseBoards = allDefenseBoards.flatMap((board) => board.groups);
   }
-  const proposals = await Proposal_default.find({
+  const availableQuery = {
     status: "Approved",
     _id: { $nin: assignedProposalsInDefenseBoards }
-  }).populate("createdBy", "name studentId currentCGPA").populate("supervisorId", "name").populate("courseSupervisorId", "name").populate("researchCellId", "title").populate("members", "name studentId currentCGPA");
+  };
+  if (cohortId) availableQuery.cohort = cohortId;
+  const proposals = await Proposal_default.find(availableQuery).populate("createdBy", "name studentId currentCGPA").populate("supervisorId", "name").populate("courseSupervisorId", "name").populate("researchCellId", "title").populate("members", "name studentId currentCGPA");
   res.json(proposals);
 });
 var getSupervisorAllGroups = asyncHandler3(async (req, res) => {
   const supervisorId = req.user._id;
-  const proposals = await Proposal_default.find({
+  const { cohortId } = req.query;
+  const groupsQuery = {
     $or: [
       { supervisorId },
       { courseSupervisorId: supervisorId }
     ],
     status: "Approved"
-  }).populate("createdBy", "name studentId currentCGPA").populate("supervisorId", "name").populate("courseSupervisorId", "name").populate("researchCellId", "title").populate("members", "name studentId currentCGPA");
+  };
+  if (cohortId) groupsQuery.cohort = cohortId;
+  const proposals = await Proposal_default.find(groupsQuery).populate("createdBy", "name studentId currentCGPA").populate("supervisorId", "name").populate("courseSupervisorId", "name").populate("researchCellId", "title").populate("members", "name studentId currentCGPA");
   const underMySupervisionOnly = [];
   const underMySupervisionAndCourseSupervision = [];
   const underMyCourseSupervision = [];
@@ -912,17 +1178,20 @@ var getSupervisorAllGroups = asyncHandler3(async (req, res) => {
 });
 var getMySupervisions = asyncHandler3(async (req, res) => {
   const supervisorId = req.user._id;
-  const proposals = await Proposal_default.find({
+  const { thesisCycleId } = req.query;
+  const supervisionsQuery = {
     $or: [
       { supervisorId },
       { coSupervisors: supervisorId }
     ],
     status: "Approved"
-  }).populate("members", "name email");
+  };
+  if (thesisCycleId) supervisionsQuery.cohort = thesisCycleId;
+  const proposals = await Proposal_default.find(supervisionsQuery).populate("members", "name email");
   res.json(proposals);
 });
 var getProposalById = asyncHandler3(async (req, res) => {
-  const proposal = await Proposal_default.findById(req.params.id).populate("members", "name email studentId").populate("supervisorId", "name email").populate("coSupervisors", "name email");
+  const proposal = await Proposal_default.findById(req.params.id).populate("members", "name email studentId").populate("supervisorId", "name email").populate("coSupervisors", "name email").populate("cohort", "name");
   if (proposal) {
     console.log(`[getProposalById] Fetched proposal ID: ${proposal._id}`);
     console.log(`[getProposalById] Proposal supervisorId: ${proposal.supervisorId?._id}`);
@@ -976,6 +1245,21 @@ var publishResult = asyncHandler3(async (req, res) => {
     proposal.grade = studentResults[0].grade;
     proposal.point = studentResults[0].point;
     await proposal.save();
+    for (const result of studentResults) {
+      await PublishedResult_default.findOneAndUpdate(
+        { student: result.studentId },
+        {
+          student: result.studentId,
+          proposal: id,
+          cohort: proposal.cohort || null,
+          grade: result.grade,
+          point: result.point,
+          courseCode: "",
+          courseTitle: ""
+        },
+        { upsert: true }
+      );
+    }
   }
   res.status(200).json(proposal);
 });
@@ -1006,7 +1290,15 @@ import express4 from "express";
 // src/controllers/userController.ts
 import asyncHandler4 from "express-async-handler";
 var getStudents = asyncHandler4(async (req, res) => {
-  const students = await User_default.find({ role: "student", department: req.user.department }).select("-password");
+  const query = { role: "student" };
+  if (req.user.role === "student") {
+    if (req.user.cohort) {
+      query.cohort = req.user.cohort;
+    }
+  } else {
+    query.department = req.user.department;
+  }
+  const students = await User_default.find(query).select("-password");
   res.json(students);
 });
 var getSupervisors = asyncHandler4(async (req, res) => {
@@ -1083,7 +1375,8 @@ var getUserProfile = asyncHandler4(async (req, res) => {
       profilePicture: user.profilePicture,
       researchCells: user.researchCells,
       department: user.department,
-      currentCGPA: user.currentCGPA
+      currentCGPA: user.currentCGPA,
+      cohort: user.cohort || null
     });
   } else {
     res.status(404);
@@ -1107,7 +1400,8 @@ var updateUserProfile = asyncHandler4(async (req, res) => {
       studentId: populatedUser.studentId,
       profilePicture: populatedUser.profilePicture,
       department: populatedUser.department,
-      currentCGPA: populatedUser.currentCGPA
+      currentCGPA: populatedUser.currentCGPA,
+      cohort: populatedUser.cohort || null
     });
   } else {
     res.status(404);
@@ -1282,10 +1576,10 @@ var userRoutes_default = router4;
 import express5 from "express";
 
 // src/models/Notice.ts
-import mongoose6 from "mongoose";
-var NoticeSchema = new mongoose6.Schema({
+import mongoose9 from "mongoose";
+var NoticeSchema = new mongoose9.Schema({
   sender: {
-    type: mongoose6.Schema.Types.ObjectId,
+    type: mongoose9.Schema.Types.ObjectId,
     ref: "User",
     required: true
   },
@@ -1304,18 +1598,18 @@ var NoticeSchema = new mongoose6.Schema({
   },
   recipients: [
     {
-      type: mongoose6.Schema.Types.ObjectId,
+      type: mongoose9.Schema.Types.ObjectId,
       ref: "User"
     }
   ],
   readBy: [
     {
-      type: mongoose6.Schema.Types.ObjectId,
+      type: mongoose9.Schema.Types.ObjectId,
       ref: "User"
     }
   ]
 }, { timestamps: true });
-var Notice_default = mongoose6.model("Notice", NoticeSchema);
+var Notice_default = mongoose9.model("Notice", NoticeSchema);
 
 // src/controllers/noticeController.ts
 import asyncHandler5 from "express-async-handler";
@@ -1499,8 +1793,8 @@ var uploadRoutes_default = router6;
 import express7 from "express";
 
 // src/models/SubmissionDate.ts
-import mongoose7 from "mongoose";
-var SubmissionDateSchema = new mongoose7.Schema({
+import mongoose10 from "mongoose";
+var SubmissionDateSchema = new mongoose10.Schema({
   startDate: {
     type: Date,
     required: true
@@ -1514,12 +1808,12 @@ var SubmissionDateSchema = new mongoose7.Schema({
     default: true
   },
   createdBy: {
-    type: mongoose7.Schema.Types.ObjectId,
+    type: mongoose10.Schema.Types.ObjectId,
     ref: "User",
     required: true
   }
 }, { timestamps: true });
-var SubmissionDate_default = mongoose7.model("SubmissionDate", SubmissionDateSchema);
+var SubmissionDate_default = mongoose10.model("SubmissionDate", SubmissionDateSchema);
 
 // src/controllers/committeeController.ts
 import asyncHandler7 from "express-async-handler";
@@ -1615,8 +1909,8 @@ import express9 from "express";
 import asyncHandler9 from "express-async-handler";
 
 // src/models/ScheduleSlot.ts
-import mongoose8 from "mongoose";
-var ScheduleSlotSchema = new mongoose8.Schema(
+import mongoose11 from "mongoose";
+var ScheduleSlotSchema = new mongoose11.Schema(
   {
     date: {
       type: Date,
@@ -1633,7 +1927,7 @@ var ScheduleSlotSchema = new mongoose8.Schema(
   },
   { timestamps: true }
 );
-var ScheduleSlot = mongoose8.model("ScheduleSlot", ScheduleSlotSchema);
+var ScheduleSlot = mongoose11.model("ScheduleSlot", ScheduleSlotSchema);
 var ScheduleSlot_default = ScheduleSlot;
 
 // src/controllers/defenseBoardController.ts
@@ -1661,6 +1955,8 @@ var createDefenseBoard = asyncHandler9(async (req, res) => {
     res.status(400);
     throw new Error("A defense board already exists for this room, schedule, and date.");
   }
+  const firstProposal = await Proposal_default.findById(groups[0]).select("cohort");
+  const cohort = firstProposal?.cohort || null;
   const defenseBoard = new DefenseBoard_default({
     boardNumber,
     defenseType,
@@ -1668,6 +1964,7 @@ var createDefenseBoard = asyncHandler9(async (req, res) => {
     schedule,
     date: scheduleSlot.date,
     groups,
+    cohort,
     boardMembers,
     createdBy: req.user._id,
     logs: [{ action: "CREATED", user: req.user._id }]
@@ -1680,10 +1977,14 @@ var createDefenseBoard = asyncHandler9(async (req, res) => {
   res.status(201).json(createdDefenseBoard);
 });
 var getAllDefenseBoards = asyncHandler9(async (req, res) => {
-  const { filter } = req.query;
+  const { filter, cohortId } = req.query;
   let query = {};
   if (filter === "current") {
     query.date = { $gte: (/* @__PURE__ */ new Date()).setHours(0, 0, 0, 0) };
+  }
+  if (cohortId && req.user.role !== "student") {
+    const proposalIds = await Proposal_default.find({ cohort: cohortId }).distinct("_id");
+    query.groups = { $in: proposalIds };
   }
   let defenseBoards = await DefenseBoard_default.find(query).populate("room", "name").populate("schedule", "startTime endTime").populate({
     path: "groups",
@@ -1749,6 +2050,8 @@ var updateDefenseBoard = asyncHandler9(async (req, res) => {
         await Proposal_default.findByIdAndUpdate(proposalId, { defenseBoardId: defenseBoard._id });
         console.log(`[updateDefenseBoard] Set defenseBoardId=${defenseBoard._id} for added Proposal: ${proposalId}`);
       }
+      const firstProposal = await Proposal_default.findById(groups[0]).select("cohort");
+      defenseBoard.cohort = firstProposal?.cohort || null;
       defenseBoard.groups = groups;
     }
     if (boardMembers) {
@@ -1781,10 +2084,14 @@ var deleteDefenseBoard = asyncHandler9(async (req, res) => {
 });
 var getSupervisorDefenseSchedule = asyncHandler9(async (req, res) => {
   const supervisorId = req.user._id;
-  const { defenseType } = req.query;
+  const { defenseType, cohortId } = req.query;
   let query = { boardMembers: supervisorId };
   if (defenseType) {
     query.defenseType = defenseType;
+  }
+  if (cohortId) {
+    const proposalIds = await Proposal_default.find({ cohort: cohortId }).distinct("_id");
+    query.groups = { $in: proposalIds };
   }
   const defenseBoards = await DefenseBoard_default.find(query).populate("room", "name").populate("schedule", "startTime endTime").populate("boardMembers", "name email").populate("createdBy", "name email").lean();
   if (!defenseBoards || defenseBoards.length === 0) {
@@ -1869,13 +2176,14 @@ var addOrUpdateComment = asyncHandler9(async (req, res) => {
 });
 var getSupervisorDefenseResult = asyncHandler9(async (req, res) => {
   const supervisorId = req.user._id;
-  const { defenseType, filter } = req.query;
+  const { defenseType, filter, thesisCycleId } = req.query;
   console.log("getSupervisorDefenseResult: supervisorId=", supervisorId, "defenseType=", defenseType, "supervisionFilter=", filter);
   let boardQuery = {};
   if (defenseType) {
     boardQuery.defenseType = defenseType;
   }
   let proposalQuery = { status: "Approved" };
+  if (thesisCycleId) proposalQuery.cohort = thesisCycleId;
   if (filter === "my_supervision") {
     proposalQuery.$and = [
       { supervisorId },
@@ -1935,11 +2243,15 @@ var getSupervisorDefenseResult = asyncHandler9(async (req, res) => {
 });
 var getMyCommitteeEvaluations = asyncHandler9(async (req, res) => {
   const supervisorId = req.user._id;
-  const { defenseType } = req.query;
+  const { defenseType, thesisCycleId } = req.query;
   console.log(`[getMyCommitteeEvaluations] Incoming supervisorId: ${supervisorId}, defenseType: ${defenseType}`);
   let query = { boardMembers: supervisorId };
   if (defenseType) {
     query.defenseType = { $regex: new RegExp(`^${defenseType}$`, "i") };
+  }
+  if (thesisCycleId) {
+    const proposalIds = await Proposal_default.find({ cohort: thesisCycleId }).distinct("_id");
+    query.groups = { $in: proposalIds };
   }
   console.log(`[getMyCommitteeEvaluations] Constructed query: ${JSON.stringify(query)}`);
   const defenseBoards = await DefenseBoard_default.find(query).populate({
@@ -1971,8 +2283,8 @@ import express10 from "express";
 import asyncHandler10 from "express-async-handler";
 
 // src/models/Room.ts
-import mongoose9 from "mongoose";
-var RoomSchema = new mongoose9.Schema(
+import mongoose12 from "mongoose";
+var RoomSchema = new mongoose12.Schema(
   {
     name: {
       type: String,
@@ -1988,7 +2300,7 @@ var RoomSchema = new mongoose9.Schema(
   },
   { timestamps: true }
 );
-var Room = mongoose9.model("Room", RoomSchema);
+var Room = mongoose12.model("Room", RoomSchema);
 var Room_default = Room;
 
 // src/controllers/roomController.ts
@@ -2126,13 +2438,13 @@ import express12 from "express";
 import asyncHandler12 from "express-async-handler";
 var getDefenseResultsForSupervisor = asyncHandler12(async (req, res) => {
   const supervisorId = req.user._id;
-  const { filter, defenseType } = req.query;
+  const { filter, defenseType, thesisCycleId } = req.query;
   try {
     let proposalQuery = {
       status: "Approved",
       defenseBoardId: { $ne: null }
-      // Only consider proposals assigned to a defense board
     };
+    if (thesisCycleId) proposalQuery.cohort = thesisCycleId;
     if (filter === "my_supervision") {
       proposalQuery.$and = [
         { supervisorId },
@@ -2203,43 +2515,6 @@ import express13 from "express";
 
 // src/controllers/evaluationController.ts
 import asyncHandler13 from "express-async-handler";
-
-// src/models/PublishedResult.ts
-import mongoose10 from "mongoose";
-var PublishedResultSchema = new mongoose10.Schema({
-  student: {
-    type: mongoose10.Schema.Types.ObjectId,
-    ref: "User",
-    required: true,
-    unique: true
-    // Each student can have only one published result
-  },
-  proposal: {
-    type: mongoose10.Schema.Types.ObjectId,
-    ref: "Proposal",
-    required: true
-  },
-  grade: {
-    type: String,
-    required: true
-  },
-  point: {
-    type: Number,
-    required: true
-  },
-  courseCode: {
-    type: String,
-    required: true
-  },
-  courseTitle: {
-    type: String,
-    required: true
-  }
-}, { timestamps: true });
-var PublishedResult = mongoose10.model("PublishedResult", PublishedResultSchema);
-var PublishedResult_default = PublishedResult;
-
-// src/controllers/evaluationController.ts
 var submitOrUpdateEvaluation = asyncHandler13(async (req, res) => {
   let { studentId, proposalId, defenseType, marks, comments, evaluationType } = req.body;
   const evaluatorId = req.user._id;
@@ -2313,6 +2588,7 @@ var submitOrUpdateEvaluation = asyncHandler13(async (req, res) => {
     student: studentId,
     evaluator: evaluatorId,
     proposal: proposalId,
+    cohort: proposal.cohort || null,
     defenseType,
     evaluationType: userEvaluationType,
     marks,
@@ -2441,13 +2717,18 @@ var getMyResults = asyncHandler13(async (req, res) => {
   }
 });
 var getBoardResults = asyncHandler13(async (req, res) => {
-  const { defenseType } = req.query;
+  const { defenseType, thesisCycleId } = req.query;
   if (!defenseType || !["Pre-Defense", "Final Defense"].includes(defenseType)) {
     res.status(400);
     throw new Error('Invalid or missing defense type. Must be "Pre-Defense" or "Final Defense".');
   }
   console.log(`[getBoardResults] Querying for defenseType: ${defenseType}`);
-  const boards = await DefenseBoard_default.find({ defenseType: { $regex: new RegExp(`^${defenseType}$`, "i") } }).sort({ boardNumber: 1 }).populate("boardMembers", "name email").populate({
+  let boardQuery = { defenseType: { $regex: new RegExp(`^${defenseType}$`, "i") } };
+  if (thesisCycleId) {
+    const proposalIds = await Proposal_default.find({ cohort: thesisCycleId }).distinct("_id");
+    boardQuery.groups = { $in: proposalIds };
+  }
+  const boards = await DefenseBoard_default.find(boardQuery).sort({ boardNumber: 1 }).populate("boardMembers", "name email").populate({
     path: "schedule",
     select: "startTime endTime"
   }).populate("room", "name");
@@ -2487,7 +2768,10 @@ var getBoardResults = asyncHandler13(async (req, res) => {
   res.status(200).json(boardResults);
 });
 var publishAllResults = asyncHandler13(async (req, res) => {
-  const proposals = await Proposal_default.find({ status: "Approved" }).populate("members");
+  const { thesisCycleId } = req.body;
+  const proposalFilter = { status: "Approved" };
+  if (thesisCycleId) proposalFilter.cohort = thesisCycleId;
+  const proposals = await Proposal_default.find(proposalFilter).populate("members");
   let publishedCount = 0;
   let alreadyPublishedCount = 0;
   let notPublishedCount = 0;
@@ -2561,8 +2845,8 @@ var evaluationRoutes_default = router13;
 import express14 from "express";
 
 // src/models/Department.ts
-import mongoose11 from "mongoose";
-var DepartmentSchema = new mongoose11.Schema({
+import mongoose13 from "mongoose";
+var DepartmentSchema = new mongoose13.Schema({
   name: {
     type: String,
     required: true,
@@ -2574,24 +2858,24 @@ var DepartmentSchema = new mongoose11.Schema({
     trim: true
   }
 }, { timestamps: true });
-var Department_default = mongoose11.model("Department", DepartmentSchema);
+var Department_default = mongoose13.model("Department", DepartmentSchema);
 
 // src/models/CommitteeMember.ts
-import mongoose12 from "mongoose";
-var CommitteeMemberSchema = new mongoose12.Schema({
+import mongoose14 from "mongoose";
+var CommitteeMemberSchema = new mongoose14.Schema({
   userId: {
-    type: mongoose12.Schema.Types.ObjectId,
+    type: mongoose14.Schema.Types.ObjectId,
     ref: "User",
     required: true
   },
   departmentId: {
-    type: mongoose12.Schema.Types.ObjectId,
+    type: mongoose14.Schema.Types.ObjectId,
     ref: "Department",
     required: true
   }
 }, { timestamps: true });
 CommitteeMemberSchema.index({ userId: 1, departmentId: 1 }, { unique: true });
-var CommitteeMember_default = mongoose12.model("CommitteeMember", CommitteeMemberSchema);
+var CommitteeMember_default = mongoose14.model("CommitteeMember", CommitteeMemberSchema);
 
 // src/controllers/adminController.ts
 import asyncHandler14 from "express-async-handler";
@@ -2763,6 +3047,42 @@ var getAdminStats = asyncHandler14(async (req, res) => {
     committeeCount
   });
 });
+var getCycleAnalytics = asyncHandler14(async (req, res) => {
+  const { cycleId } = req.params;
+  const cycles = cycleId ? [await ThesisCycle_default.findById(cycleId)].filter(Boolean) : await ThesisCycle_default.find({}).sort({ createdAt: -1 });
+  const results = [];
+  for (const cycle of cycles) {
+    const cycleIdStr = cycle._id.toString();
+    const totalProposals = await Proposal_default.countDocuments({ cohort: cycleIdStr });
+    const approvedProposals = await Proposal_default.countDocuments({ cohort: cycleIdStr, status: "Approved" });
+    const pendingProposals = await Proposal_default.countDocuments({
+      cohort: cycleIdStr,
+      status: { $in: ["Pending Committee", "Pending Supervisor"] }
+    });
+    const notApproved = await Proposal_default.countDocuments({ cohort: cycleIdStr, status: "Not Approved" });
+    const defenseBoards = await DefenseBoard_default.countDocuments({ cohort: cycleIdStr });
+    const evaluations = await Evaluation_default.countDocuments({ cohort: cycleIdStr });
+    const publishedResults = await PublishedResult_default.countDocuments({ cohort: cycleIdStr });
+    results.push({
+      _id: cycle._id,
+      name: cycle.name,
+      startSemester: cycle.startSemester,
+      endSemester: cycle.endSemester,
+      status: cycle.status,
+      archived: cycle.archived,
+      stats: {
+        totalProposals,
+        approvedProposals,
+        pendingProposals,
+        notApproved,
+        defenseBoards,
+        evaluations,
+        publishedResults
+      }
+    });
+  }
+  res.json(cycleId ? results[0] || null : results);
+});
 
 // src/routes/adminRoutes.ts
 var router14 = express14.Router();
@@ -2777,6 +3097,8 @@ router14.route("/teachers/:id").put(updateTeacher).delete(deleteTeacher);
 router14.get("/students", getStudents2);
 router14.route("/committee").post(assignCommitteeMember).get(getCommitteeAssignments);
 router14.delete("/committee/:id", removeCommitteeAssignment);
+router14.get("/cycle-stats", getCycleAnalytics);
+router14.get("/cycle-stats/:cycleId", getCycleAnalytics);
 var adminRoutes_default = router14;
 
 // src/routes/publicRoutes.ts
@@ -2867,8 +3189,207 @@ var getPublicStats = asyncHandler15(async (req, res) => {
   });
 });
 
+// src/controllers/thesisCycleController.ts
+import asyncHandler16 from "express-async-handler";
+var isRegistrationOpen2 = (cycle) => {
+  if (!cycle || cycle.archived) return false;
+  if (cycle.status === "Closed") return false;
+  if (cycle.proposalSubmissionOpen === true) return true;
+  const now = /* @__PURE__ */ new Date();
+  const start = cycle.registrationStartDate ? new Date(cycle.registrationStartDate) : null;
+  const end = cycle.registrationEndDate ? new Date(cycle.registrationEndDate) : null;
+  if (start || end) {
+    if (start && now < start) return false;
+    if (end && now > end) return false;
+    return true;
+  }
+  return cycle.status === "Active";
+};
+var createThesisCycle = asyncHandler16(async (req, res) => {
+  const {
+    name,
+    academicYear,
+    semester,
+    startSemester,
+    endSemester,
+    registrationStartDate,
+    registrationEndDate,
+    status,
+    proposalSubmissionOpen,
+    proposalSubmissionDeadline
+  } = req.body;
+  if (!name) {
+    res.status(400);
+    throw new Error("Cohort name is required");
+  }
+  const existing = await ThesisCycle_default.findOne({ name });
+  if (existing) {
+    res.status(400);
+    throw new Error("A cohort with this name already exists");
+  }
+  const cycle = await ThesisCycle_default.create({
+    name,
+    academicYear: academicYear || semester || "",
+    semester: semester || "",
+    startSemester,
+    endSemester,
+    registrationStartDate: registrationStartDate ? new Date(registrationStartDate) : void 0,
+    registrationEndDate: registrationEndDate ? new Date(registrationEndDate) : void 0,
+    status: status || "Upcoming",
+    proposalSubmissionOpen: !!proposalSubmissionOpen,
+    proposalSubmissionDeadline: proposalSubmissionDeadline ? new Date(proposalSubmissionDeadline) : void 0,
+    createdBy: req.user._id
+  });
+  res.status(201).json(cycle);
+});
+var getThesisCycles = asyncHandler16(async (req, res) => {
+  const cycles = await ThesisCycle_default.find({}).sort({ createdAt: -1 });
+  res.json(cycles);
+});
+var getThesisCycleById = asyncHandler16(async (req, res) => {
+  const cycle = await ThesisCycle_default.findById(req.params.id);
+  if (!cycle) {
+    res.status(404);
+    throw new Error("Cohort not found");
+  }
+  res.json(cycle);
+});
+var updateThesisCycle = asyncHandler16(async (req, res) => {
+  const cycle = await ThesisCycle_default.findById(req.params.id);
+  if (!cycle) {
+    res.status(404);
+    throw new Error("Cohort not found");
+  }
+  const {
+    name,
+    academicYear,
+    semester,
+    startSemester,
+    endSemester,
+    registrationStartDate,
+    registrationEndDate,
+    status,
+    proposalSubmissionOpen,
+    proposalSubmissionDeadline,
+    archived
+  } = req.body;
+  if (name !== void 0) {
+    const duplicate = await ThesisCycle_default.findOne({ name, _id: { $ne: cycle._id } });
+    if (duplicate) {
+      res.status(400);
+      throw new Error("A cohort with this name already exists");
+    }
+    cycle.name = name;
+  }
+  if (academicYear !== void 0) cycle.academicYear = academicYear;
+  if (semester !== void 0) cycle.semester = semester;
+  if (startSemester !== void 0) cycle.startSemester = startSemester;
+  if (endSemester !== void 0) cycle.endSemester = endSemester;
+  if (registrationStartDate !== void 0) cycle.registrationStartDate = registrationStartDate ? new Date(registrationStartDate) : void 0;
+  if (registrationEndDate !== void 0) cycle.registrationEndDate = registrationEndDate ? new Date(registrationEndDate) : void 0;
+  if (status !== void 0) cycle.status = status;
+  if (proposalSubmissionOpen !== void 0) cycle.proposalSubmissionOpen = !!proposalSubmissionOpen;
+  if (proposalSubmissionDeadline !== void 0) cycle.proposalSubmissionDeadline = proposalSubmissionDeadline ? new Date(proposalSubmissionDeadline) : void 0;
+  if (archived !== void 0) cycle.archived = !!archived;
+  const updated = await cycle.save();
+  res.json(updated);
+});
+var getOpenForRegistration = asyncHandler16(async (req, res) => {
+  const cycles = await ThesisCycle_default.find({ archived: false }).sort({ registrationStartDate: 1 });
+  const open = cycles.filter((c) => isRegistrationOpen2(c)).map((c) => ({
+    _id: c._id,
+    name: c.name,
+    academicYear: c.academicYear,
+    semester: c.semester,
+    registrationStartDate: c.registrationStartDate,
+    registrationEndDate: c.registrationEndDate,
+    status: c.status
+  }));
+  res.json(open);
+});
+var getMyCohort = asyncHandler16(async (req, res) => {
+  if (!req.user.cohort) {
+    return res.json(null);
+  }
+  const cycle = await ThesisCycle_default.findById(req.user.cohort);
+  if (!cycle) {
+    return res.json(null);
+  }
+  res.json(cycle);
+});
+var archiveThesisCycle = asyncHandler16(async (req, res) => {
+  const cycle = await ThesisCycle_default.findById(req.params.id);
+  if (!cycle) {
+    res.status(404);
+    throw new Error("Cohort not found");
+  }
+  cycle.archived = !cycle.archived;
+  const updated = await cycle.save();
+  res.json(updated);
+});
+var setActiveCohort = asyncHandler16(async (req, res) => {
+  const cycle = await ThesisCycle_default.findById(req.params.id);
+  if (!cycle) {
+    res.status(404);
+    throw new Error("Cohort not found");
+  }
+  await ThesisCycle_default.updateMany(
+    { _id: { $ne: cycle._id }, status: "Active" },
+    { status: "Upcoming" }
+  );
+  cycle.status = "Active";
+  cycle.archived = false;
+  const updated = await cycle.save();
+  res.json(updated);
+});
+var setProposalSubmission = asyncHandler16(async (req, res) => {
+  const cycle = await ThesisCycle_default.findById(req.params.id);
+  if (!cycle) {
+    res.status(404);
+    throw new Error("Cohort not found");
+  }
+  const { open, proposalSubmissionDeadline } = req.body;
+  if (open !== void 0) cycle.proposalSubmissionOpen = !!open;
+  if (proposalSubmissionDeadline !== void 0) {
+    cycle.proposalSubmissionDeadline = proposalSubmissionDeadline ? new Date(proposalSubmissionDeadline) : void 0;
+  }
+  const updated = await cycle.save();
+  res.json(updated);
+});
+var setRegistrationWindow = asyncHandler16(async (req, res) => {
+  const cycle = await ThesisCycle_default.findById(req.params.id);
+  if (!cycle) {
+    res.status(404);
+    throw new Error("Cohort not found");
+  }
+  const { registrationStartDate, registrationEndDate } = req.body;
+  if (registrationStartDate !== void 0) {
+    cycle.registrationStartDate = registrationStartDate ? new Date(registrationStartDate) : void 0;
+  }
+  if (registrationEndDate !== void 0) {
+    cycle.registrationEndDate = registrationEndDate ? new Date(registrationEndDate) : void 0;
+  }
+  const updated = await cycle.save();
+  res.json(updated);
+});
+var getActiveCohort = asyncHandler16(async (req, res) => {
+  const active = await ThesisCycle_default.findOne({ status: "Active", archived: false });
+  if (!active) {
+    return res.json(null);
+  }
+  res.json(active);
+});
+var getPublicThesisCycles = asyncHandler16(async (req, res) => {
+  const cycles = await ThesisCycle_default.find({
+    archived: false,
+    proposalSubmissionOpen: true
+  }).sort({ createdAt: -1 });
+  res.json(cycles);
+});
+
 // src/routes/publicRoutes.ts
 var router15 = express15.Router();
+router15.get("/thesis-cycles", getPublicThesisCycles);
 router15.get("/departments", getPublicDepartments);
 router15.get("/research-cells", getPublicResearchCells);
 router15.get("/notices", getPublicNotices);
@@ -2882,7 +3403,7 @@ var publicRoutes_default = router15;
 import express16 from "express";
 
 // src/controllers/aiController.ts
-import asyncHandler16 from "express-async-handler";
+import asyncHandler17 from "express-async-handler";
 import axios from "axios";
 var AI_TIMEOUT = 2e4;
 var CLIENT_URL = process.env.FRONTEND_URL || process.env.CLIENT_URL || "http://localhost:3000";
@@ -2906,7 +3427,7 @@ var callOpenRouter = async (apiKey, model, messages) => {
     }
   );
 };
-var chatWithAI = asyncHandler16(async (req, res) => {
+var chatWithAI = asyncHandler17(async (req, res) => {
   const { message, chatHistory } = req.body;
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
@@ -2962,7 +3483,7 @@ var chatWithAI = asyncHandler16(async (req, res) => {
   res.status(503);
   throw new Error(fallbackMsg);
 });
-var generateProposalDescription = asyncHandler16(async (req, res) => {
+var generateProposalDescription = asyncHandler17(async (req, res) => {
   const { title } = req.body;
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
@@ -3017,6 +3538,22 @@ router16.post("/chat", chatWithAI);
 router16.post("/generate-description", protect, generateProposalDescription);
 var aiRoutes_default = router16;
 
+// src/routes/thesisCycleRoutes.ts
+import express17 from "express";
+var router17 = express17.Router();
+router17.get("/open-for-registration", getOpenForRegistration);
+router17.get("/active", protect, getActiveCohort);
+router17.get("/me", protect, getMyCohort);
+router17.use(protect);
+router17.route("/").post(authorizeRoles("admin"), createThesisCycle).get(authorizeRoles("admin"), getThesisCycles);
+router17.get("/:id", getThesisCycleById);
+router17.put("/:id/proposal-submission", authorizeRoles("committee"), setProposalSubmission);
+router17.put("/:id/registration", authorizeRoles("admin"), setRegistrationWindow);
+router17.put("/:id/activate", authorizeRoles("admin"), setActiveCohort);
+router17.patch("/:id/archive", authorizeRoles("admin"), archiveThesisCycle);
+router17.put("/:id", authorizeRoles("admin"), updateThesisCycle);
+var thesisCycleRoutes_default = router17;
+
 // src/app.ts
 var checkEnv = () => {
   const requiredEnv = ["MONGO_URI", "JWT_SECRET", "FRONTEND_URL"];
@@ -3026,10 +3563,10 @@ var checkEnv = () => {
   }
 };
 checkEnv();
-var app = express17();
+var app = express18();
 var allowedOrigins = process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : ["http://localhost:3000"];
 app.use(cors({ origin: allowedOrigins, credentials: true }));
-app.use(express17.json());
+app.use(express18.json());
 var cached = global.mongooseCache;
 if (!cached) {
   cached = global.mongooseCache = { conn: null, promise: null };
@@ -3047,9 +3584,25 @@ app.use(async (req, res, next) => {
       bufferCommands: false,
       serverSelectionTimeoutMS: 5e3
     };
-    cached.promise = mongoose13.connect(process.env.MONGO_URI, opts).then((mongoose14) => {
+    cached.promise = mongoose15.connect(process.env.MONGO_URI, opts).then(async (mongoose16) => {
       console.log("MongoDB connected for serverless environment (cached)");
-      return mongoose14;
+      try {
+        const usersCol = mongoose16.connection.collection("users");
+        await usersCol.dropIndex("studentId_1").catch(() => {
+        });
+        await usersCol.createIndex(
+          { studentId: 1 },
+          {
+            unique: true,
+            name: "studentId_1",
+            partialFilterExpression: { role: "student", studentId: { $exists: true, $ne: null } }
+          }
+        ).catch(() => {
+        });
+      } catch (idxErr) {
+        console.error("Index reconciliation warning (non-fatal):", idxErr);
+      }
+      return mongoose16;
     }).catch((err) => {
       cached.promise = null;
       console.error("MongoDB connection error:", err);
@@ -3078,6 +3631,7 @@ app.use("/api/defense-results", defenseResultRoutes_default);
 app.use("/api/evaluations", evaluationRoutes_default);
 app.use("/api/admin", adminRoutes_default);
 app.use("/api/public", publicRoutes_default);
+app.use("/api/thesis-cycles", thesisCycleRoutes_default);
 app.use("/api/ai", aiRoutes_default);
 app.get("/", (req, res) => {
   res.send("API is running...");

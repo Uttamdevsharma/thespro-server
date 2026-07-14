@@ -66,6 +66,11 @@ const ProposalSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  cohort: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Cohort',
+    default: null,
+  },
   defenseBoardId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'DefenseBoard',

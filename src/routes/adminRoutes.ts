@@ -12,7 +12,8 @@ import {
     assignCommitteeMember,
     getCommitteeAssignments,
     removeCommitteeAssignment,
-    getAdminStats
+    getAdminStats,
+    getCycleAnalytics
 } from '../controllers/adminController.js';
 import { protect, authorizeRoles } from '../middleware/authMiddleware.js';
 
@@ -52,5 +53,8 @@ router.route('/committee')
     .get(getCommitteeAssignments);
 
 router.delete('/committee/:id', removeCommitteeAssignment);
+
+router.get('/cycle-stats', getCycleAnalytics);
+router.get('/cycle-stats/:cycleId', getCycleAnalytics);
 
 export default router;

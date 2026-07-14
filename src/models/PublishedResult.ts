@@ -12,6 +12,11 @@ const PublishedResultSchema = new mongoose.Schema({
     ref: 'Proposal',
     required: true,
   },
+  cohort: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Cohort',
+    default: null,
+  },
   grade: {
     type: String,
     required: true,

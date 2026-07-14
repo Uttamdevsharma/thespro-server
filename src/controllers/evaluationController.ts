@@ -106,6 +106,7 @@ const submitOrUpdateEvaluation = asyncHandler(async (req, res) => {
     student: studentId,
     evaluator: evaluatorId,
     proposal: proposalId,
+    cohort: proposal.cohort || null,
     defenseType,
     evaluationType: userEvaluationType,
     marks,
@@ -283,7 +284,7 @@ const getMyResults = asyncHandler(async (req, res) => {
 // @route  GET /api/evaluations/board-results
 // @access Private (Committee)
 const getBoardResults = asyncHandler(async (req, res) => {
-  const { defenseType } = req.query;
+  const { defenseType, thesisCycleId } = req.query;
 
   if (!defenseType || !['Pre-Defense', 'Final Defense'].includes(defenseType)) {
     res.status(400);
@@ -292,7 +293,13 @@ const getBoardResults = asyncHandler(async (req, res) => {
 
   console.log(`[getBoardResults] Querying for defenseType: ${defenseType}`);
 
-  const boards = await DefenseBoard.find({ defenseType: { $regex: new RegExp(`^${defenseType}$`, 'i') } }).sort({ boardNumber: 1 }).populate('boardMembers', 'name email').populate({
+  let boardQuery: any = { defenseType: { $regex: new RegExp(`^${defenseType}$`, 'i') } };
+  if (thesisCycleId) {
+    const proposalIds = await Proposal.find({ cohort: thesisCycleId }).distinct('_id');
+    boardQuery.groups = { $in: proposalIds };
+  }
+
+  const boards = await DefenseBoard.find(boardQuery).sort({ boardNumber: 1 }).populate('boardMembers', 'name email').populate({
     path: 'schedule',
     select: 'startTime endTime'
   }).populate('room', 'name');
@@ -348,7 +355,10 @@ const getBoardResults = asyncHandler(async (req, res) => {
 // @route  POST /api/evaluations/publish-all-results
 // @access Private (Committee)
 const publishAllResults = asyncHandler(async (req, res) => {
-    const proposals = await Proposal.find({ status: 'Approved' }).populate('members');
+    const { thesisCycleId } = req.body;
+    const proposalFilter: any = { status: 'Approved' };
+    if (thesisCycleId) proposalFilter.cohort = thesisCycleId;
+    const proposals = await Proposal.find(proposalFilter).populate('members');
     let publishedCount = 0;
     let alreadyPublishedCount = 0;
     let notPublishedCount = 0;

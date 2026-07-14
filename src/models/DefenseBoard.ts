@@ -33,6 +33,11 @@ const DefenseBoardSchema = new mongoose.Schema(
         required: true,
       },
     ],
+  cohort: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Cohort',
+    default: null,
+  },
     comments: [
       {
         group: {

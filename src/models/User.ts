@@ -24,9 +24,14 @@ const UserSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Department',
   },
+  cohort: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Cohort',
+    default: null,
+  },
   studentId: {
     type: String,
-    unique: function() { return this.role === 'student' && this.studentId; } // Only unique if provided
+    sparse: true, // Allow multiple docs with null/undefined studentId (set later at profile completion)
   },
   profilePicture: {
     type: String,
@@ -91,5 +96,16 @@ UserSchema.pre('save', async function (next) {
 UserSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
+
+// Enforce studentId uniqueness only for students who actually have one set.
+// (Sparse + partial index so the many null/undefined values don't collide.)
+UserSchema.index(
+  { studentId: 1 },
+  {
+    unique: true,
+    name: 'studentId_1',
+    partialFilterExpression: { role: 'student', studentId: { $exists: true, $ne: null } },
+  }
+);
 
 export default mongoose.model('User', UserSchema);

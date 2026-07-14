@@ -8,13 +8,14 @@ import User from '../models/User.js';
 // @access  Private (Supervisor)
 const getDefenseResultsForSupervisor = asyncHandler(async (req, res) => {
   const supervisorId = req.user._id;
-  const { filter, defenseType } = req.query; // Get filter and defenseType from query parameters
+  const { filter, defenseType, thesisCycleId } = req.query;
 
   try {
-    let proposalQuery = {
+    let proposalQuery: any = {
       status: 'Approved',
-      defenseBoardId: { $ne: null }, // Only consider proposals assigned to a defense board
+      defenseBoardId: { $ne: null },
     };
+    if (thesisCycleId) proposalQuery.cohort = thesisCycleId;
 
     if (filter === 'my_supervision') {
       proposalQuery.$and = [

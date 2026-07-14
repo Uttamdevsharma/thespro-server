@@ -5,7 +5,19 @@ import asyncHandler from 'express-async-handler';
 // @route   GET /api/users/students
 // @access  Private
 const getStudents = asyncHandler(async (req, res) => {
-  const students = await User.find({ role: 'student', department: req.user.department }).select('-password');
+  const query: any = { role: 'student' };
+
+  // Students may only search for / invite peers from their own cohort (isolation).
+  // Supervisors and committee still operate by department.
+  if (req.user.role === 'student') {
+    if (req.user.cohort) {
+      query.cohort = req.user.cohort;
+    }
+  } else {
+    query.department = req.user.department;
+  }
+
+  const students = await User.find(query).select('-password');
   res.json(students);
 });
 
@@ -112,6 +124,7 @@ const getUserProfile = asyncHandler(async (req, res) => {
       researchCells: user.researchCells,
       department: user.department,
       currentCGPA: user.currentCGPA,
+      cohort: user.cohort || null,
     });
   } else {
     res.status(404);
@@ -146,6 +159,7 @@ const updateUserProfile = asyncHandler(async (req, res) => {
       profilePicture: populatedUser.profilePicture,
       department: populatedUser.department,
       currentCGPA: populatedUser.currentCGPA,
+      cohort: populatedUser.cohort || null,
     });
   } else {
     res.status(404);

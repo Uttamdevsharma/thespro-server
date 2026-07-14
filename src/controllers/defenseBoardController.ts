@@ -37,6 +37,9 @@ const createDefenseBoard = asyncHandler(async (req, res) => {
     throw new Error('A defense board already exists for this room, schedule, and date.');
   }
 
+  const firstProposal = await Proposal.findById(groups[0]).select('cohort');
+  const cohort = firstProposal?.cohort || null;
+
   const defenseBoard = new DefenseBoard({
     boardNumber,
     defenseType,
@@ -44,6 +47,7 @@ const createDefenseBoard = asyncHandler(async (req, res) => {
     schedule,
     date: scheduleSlot.date,
     groups,
+    cohort,
     boardMembers,
     createdBy: req.user._id,
     logs: [{ action: 'CREATED', user: req.user._id }],
@@ -63,12 +67,16 @@ const createDefenseBoard = asyncHandler(async (req, res) => {
 
 //  Get all defense boards
 const getAllDefenseBoards = asyncHandler(async (req, res) => {
-  const { filter } = req.query;
+  const { filter, cohortId } = req.query;
   let query = {};
 
   if (filter === 'current') {
-    // Only show boards with a date in the future or today
     query.date = { $gte: new Date().setHours(0, 0, 0, 0) };
+  }
+
+  if (cohortId && req.user.role !== 'student') {
+    const proposalIds = await Proposal.find({ cohort: cohortId }).distinct('_id');
+    query.groups = { $in: proposalIds };
   }
 
   let defenseBoards = await DefenseBoard.find(query)
@@ -174,6 +182,8 @@ const updateDefenseBoard = asyncHandler(async (req, res) => {
         console.log(`[updateDefenseBoard] Set defenseBoardId=${defenseBoard._id} for added Proposal: ${proposalId}`);
       }
 
+      const firstProposal = await Proposal.findById(groups[0]).select('cohort');
+      defenseBoard.cohort = firstProposal?.cohort || null;
       defenseBoard.groups = groups;
     }
 
@@ -226,14 +236,18 @@ const deleteDefenseBoard = asyncHandler(async (req, res) => {
 // @access  Private/Supervisor
 const getSupervisorDefenseSchedule = asyncHandler(async (req, res) => {
   const supervisorId = req.user._id;
-  const { defenseType } = req.query; 
+  const { defenseType, cohortId } = req.query; 
 
-  let query = { boardMembers: supervisorId };
+  let query: any = { boardMembers: supervisorId };
 
   if (defenseType) {
     query.defenseType = defenseType; 
   }
 
+  if (cohortId) {
+    const proposalIds = await Proposal.find({ cohort: cohortId }).distinct('_id');
+    query.groups = { $in: proposalIds };
+  }
 
   const defenseBoards = await DefenseBoard.find(query)
     .populate('room', 'name')
@@ -387,7 +401,7 @@ const addOrUpdateComment = asyncHandler(async (req, res) => {
 // @access  Private/Supervisor
 const getSupervisorDefenseResult = asyncHandler(async (req, res) => {
   const supervisorId = req.user._id;
-  const { defenseType, filter } = req.query; // Get defenseType and filter from query parameters
+  const { defenseType, filter, thesisCycleId } = req.query;
 
   console.log('getSupervisorDefenseResult: supervisorId=', supervisorId, 'defenseType=', defenseType, 'supervisionFilter=', filter);
 
@@ -397,7 +411,8 @@ const getSupervisorDefenseResult = asyncHandler(async (req, res) => {
   }
 
   // 1. Find proposals directly supervised by the logged-in supervisor
-  let proposalQuery = { status: 'Approved' };
+  let proposalQuery: any = { status: 'Approved' };
+  if (thesisCycleId) proposalQuery.cohort = thesisCycleId;
 
   if (filter === 'my_supervision') {
     proposalQuery.$and = [
@@ -506,14 +521,17 @@ const getSupervisorDefenseResult = asyncHandler(async (req, res) => {
 // @access  Private/Supervisor
 const getMyCommitteeEvaluations = asyncHandler(async (req, res) => {
   const supervisorId = req.user._id;
-  const { defenseType } = req.query;
+  const { defenseType, thesisCycleId } = req.query;
 
   console.log(`[getMyCommitteeEvaluations] Incoming supervisorId: ${supervisorId}, defenseType: ${defenseType}`);
 
-  let query = { boardMembers: supervisorId };
+  let query: any = { boardMembers: supervisorId };
   if (defenseType) {
-    // Use case-insensitive regex for defenseType to match 'Pre-Defense', 'pre-defense', 'Final Defense', etc.
     query.defenseType = { $regex: new RegExp(`^${defenseType}$`, 'i') };
+  }
+  if (thesisCycleId) {
+    const proposalIds = await Proposal.find({ cohort: thesisCycleId }).distinct('_id');
+    query.groups = { $in: proposalIds };
   }
 
   console.log(`[getMyCommitteeEvaluations] Constructed query: ${JSON.stringify(query)}`);

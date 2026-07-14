@@ -1,6 +1,11 @@
 import User from '../models/User.js';
 import Department from '../models/Department.js';
 import CommitteeMember from '../models/CommitteeMember.js';
+import Proposal from '../models/Proposal.js';
+import DefenseBoard from '../models/DefenseBoard.js';
+import Evaluation from '../models/Evaluation.js';
+import PublishedResult from '../models/PublishedResult.js';
+import ThesisCycle from '../models/ThesisCycle.js';
 import asyncHandler from 'express-async-handler';
 
 // --- Department Management ---
@@ -245,4 +250,50 @@ export const getAdminStats = asyncHandler(async (req, res) => {
         studentCount,
         committeeCount
     });
+});
+
+// @desc    Get thesis cycle analytics
+// @route   GET /api/admin/cycle-stats
+// @route   GET /api/admin/cycle-stats/:cycleId
+// @access  Private (Admin)
+export const getCycleAnalytics = asyncHandler(async (req, res) => {
+    const { cycleId } = req.params;
+    const cycles = cycleId
+        ? [await ThesisCycle.findById(cycleId)].filter(Boolean)
+        : await ThesisCycle.find({}).sort({ createdAt: -1 });
+
+    const results = [];
+    for (const cycle of cycles) {
+        const cycleIdStr = cycle._id.toString();
+        const totalProposals = await Proposal.countDocuments({ cohort: cycleIdStr });
+        const approvedProposals = await Proposal.countDocuments({ cohort: cycleIdStr, status: 'Approved' });
+        const pendingProposals = await Proposal.countDocuments({
+            cohort: cycleIdStr,
+            status: { $in: ['Pending Committee', 'Pending Supervisor'] }
+        });
+        const notApproved = await Proposal.countDocuments({ cohort: cycleIdStr, status: 'Not Approved' });
+        const defenseBoards = await DefenseBoard.countDocuments({ cohort: cycleIdStr });
+        const evaluations = await Evaluation.countDocuments({ cohort: cycleIdStr });
+        const publishedResults = await PublishedResult.countDocuments({ cohort: cycleIdStr });
+
+        results.push({
+            _id: cycle._id,
+            name: cycle.name,
+            startSemester: cycle.startSemester,
+            endSemester: cycle.endSemester,
+            status: cycle.status,
+            archived: cycle.archived,
+            stats: {
+                totalProposals,
+                approvedProposals,
+                pendingProposals,
+                notApproved,
+                defenseBoards,
+                evaluations,
+                publishedResults,
+            },
+        });
+    }
+
+    res.json(cycleId ? results[0] || null : results);
 });

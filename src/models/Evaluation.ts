@@ -16,6 +16,11 @@ const evaluationSchema = new mongoose.Schema({
     ref: 'Proposal',
     required: true,
   },
+  cohort: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Cohort',
+    default: null,
+  },
   defenseType: {
     type: String,
     enum: ['Pre-Defense', 'Final Defense'],

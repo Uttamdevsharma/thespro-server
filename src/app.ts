@@ -40,6 +40,7 @@ import evaluationRoutes from './routes/evaluationRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
 import aiRoutes from './routes/aiRoutes.js';
+import thesisCycleRoutes from './routes/thesisCycleRoutes.js';
 
 
 const app = express();
@@ -72,8 +73,24 @@ app.use(async (req, res, next) => {
       serverSelectionTimeoutMS: 5000,
     };
 
-    cached!.promise = mongoose.connect(process.env.MONGO_URI, opts).then((mongoose) => {
+    cached!.promise = mongoose.connect(process.env.MONGO_URI, opts).then(async (mongoose) => {
       console.log('MongoDB connected for serverless environment (cached)');
+      // Remove the legacy non-sparse unique index on studentId (it collided on null
+      // values) and ensure the sparse partial unique index exists instead.
+      try {
+        const usersCol = mongoose.connection.collection('users');
+        await usersCol.dropIndex('studentId_1').catch(() => {});
+        await usersCol.createIndex(
+          { studentId: 1 },
+          {
+            unique: true,
+            name: 'studentId_1',
+            partialFilterExpression: { role: 'student', studentId: { $exists: true, $ne: null } },
+          }
+        ).catch(() => {});
+      } catch (idxErr) {
+        console.error('Index reconciliation warning (non-fatal):', idxErr);
+      }
       return mongoose;
     }).catch(err => {
       cached!.promise = null;
@@ -106,6 +123,7 @@ app.use('/api/defense-results', defenseResultRoutes);
 app.use('/api/evaluations', evaluationRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/public', publicRoutes);
+app.use('/api/thesis-cycles', thesisCycleRoutes);
 app.use('/api/ai', aiRoutes);
 
 // Basic route

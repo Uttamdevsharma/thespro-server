@@ -8,9 +8,11 @@ import {
     getPublicStats,
     getPublicNoticeById,
 } from '../controllers/publicController.js';
+import { getPublicThesisCycles } from '../controllers/thesisCycleController.js';
 
 const router = express.Router();
 
+router.get('/thesis-cycles', getPublicThesisCycles);
 router.get('/departments', getPublicDepartments);
 router.get('/research-cells', getPublicResearchCells);
 router.get('/notices', getPublicNotices);
